@@ -13,6 +13,21 @@
 
 Do not copy server entities into a global client store unless a feature needs a derived view. Keep server state normalized by resource and tenant.
 
+## Multi-agent run state
+
+Agentic interactions are server state scoped by tenant and session. Keep the authoritative plan, step statuses, results, warnings, and assumptions in the query cache; keep only transient composer text, expanded panels, and confirmation UI locally.
+
+```text
+AgentRun
+├── plan: authorized capability steps
+├── execution: queued / running / completed / partial / failed / canceled
+├── step results: independently addressable by runId + stepId
+├── evidence: source and freshness metadata
+└── recovery: retry failed steps or cancel active run
+```
+
+The client must not choose agents, expose hidden prompts, synthesize domain facts, or display results from unauthorized steps. A plan containing a write capability enters `awaiting_confirmation` before execution.
+
 ## Query key convention
 
 Every tenant-scoped query key includes the tenant:
@@ -23,6 +38,8 @@ Every tenant-scoped query key includes the tenant:
 ['tenant', tenantId, 'finance', 'budget-status', category, period]
 ['tenant', tenantId, 'documents', filters]
 ['tenant', tenantId, 'conversation', sessionId]
+['tenant', tenantId, 'agent-run', runId]
+['tenant', tenantId, 'agent-run', runId, 'events']
 ```
 
 On tenant change, invalidate or remove all keys for the previous tenant and cancel requests whose context no longer matches.
@@ -62,6 +79,7 @@ Normalize backend errors into feature-safe states:
 - **Receipt upload:** use a staged upload; poll extraction status; require user review before creating an expense when fields are uncertain.
 - **Document upload:** show private upload progress, classification status, link status, and retry actions.
 - **Chat actions:** display the parsed command and confirmation state before executing write commands.
+- **Agent runs:** display the authorized plan, consume ordered run events, render parallel step progress, and retry failed steps without rerunning successful steps.
 
 ## Cache and privacy rules
 
@@ -82,3 +100,16 @@ Examples:
 - `RoleChanged(tenantId)` refreshes capabilities and navigation.
 - `AdminTransferred(tenantId)` refreshes both users' membership contexts.
 - `DocumentClassified(tenantId)` refreshes document and linked-domain status.
+- `AgentRunCompleted(tenantId, runId)` invalidates the run snapshot and conversation session.
+- `AgentStepFailed(tenantId, runId, stepId)` updates only the affected step and exposes retry for that step.
+- `RoleChanged(tenantId)` cancels or reauthorizes active runs whose capability set changed.
+
+## Agent event handling
+
+Agent events should contain `tenantId`, `sessionId`, `runId`, `sequence`, `type`, `stepId`, and `occurredAt`. The client:
+
+1. Rejects events for another tenant or session.
+2. Ignores duplicate sequence numbers.
+3. Requests a run snapshot when a sequence gap is detected.
+4. Keeps successful step results while retrying a failed step.
+5. Cancels the stream and clears visible results on tenant switch or sign out.
