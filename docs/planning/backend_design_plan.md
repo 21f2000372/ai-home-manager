@@ -199,7 +199,7 @@ Child and Guest finance requests must return `403` before the Finance module or 
 
 ## 5. Persistence design
 
-Use one relational database for the modular-monolith MVP with strict module ownership and tenant filters. A future service split can move a module to its own database without changing its public port contracts.
+Use one SQLite database for the modular-monolith MVP with strict module ownership and tenant filters. Enable foreign keys and WAL mode, keep write transactions short, and enforce tenant isolation in application repositories because SQLite has no Row-Level Security. A future server-database migration or service split can move a module without changing its public port contracts.
 
 ### Shared identity and tenancy tables
 

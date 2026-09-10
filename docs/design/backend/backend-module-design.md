@@ -10,7 +10,7 @@ Use a modular monolith for the first backend release. Each bounded component is 
 - Infrastructure adapters.
 - Tenant-aware tests.
 
-The module boundary is a code boundary even though modules share a PostgreSQL instance. Direct cross-module table access is prohibited.
+The module boundary is a code boundary even though modules share a SQLite database. Direct cross-module table access is prohibited.
 
 ## Request flow
 
@@ -26,7 +26,7 @@ component "Authorization" as Auth
 component "Application Command / Query" as App
 component "Domain Policy + Aggregate" as Domain
 component "Tenant Repository Port" as Repository
-component "PostgreSQL Adapter" as Postgres
+component "SQLite Adapter" as Sqlite
 component "Outbox Port" as Outbox
 component "Worker" as Worker
 
@@ -36,7 +36,7 @@ Tenant --> Auth
 Auth --> App
 App --> Domain
 Domain --> Repository
-Repository --> Postgres
+Repository --> Sqlite
 Domain --> Outbox
 Outbox --> Worker
 Worker --> App
@@ -128,4 +128,4 @@ Use a transactional outbox for domain events. Workers must:
 4. Record success or retryable/permanent failure.
 5. Preserve tenant and correlation identifiers in audit records.
 
-Use Redis only for ephemeral coordination. PostgreSQL remains authoritative for state, outbox, and job idempotency.
+Use Redis only for ephemeral coordination. SQLite remains authoritative for state, outbox, and job idempotency in the MVP.

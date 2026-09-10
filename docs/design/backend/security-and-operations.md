@@ -11,7 +11,7 @@ Tenant isolation is enforced in layers:
 5. Repository methods require tenant context and add `tenant_id` predicates.
 6. Object storage adapters require tenant context and use tenant-scoped keys.
 7. Events, jobs, caches, audit records, and logs carry tenant and correlation identifiers.
-8. PostgreSQL Row-Level Security may provide defense in depth.
+8. SQLite has no Row-Level Security, so repository tenant predicates, composite keys, connection-level foreign-key enforcement, and cross-tenant integration tests are mandatory.
 
 No module may accept a bare user-supplied tenant ID as authorization evidence.
 
@@ -39,7 +39,7 @@ The matrix is enforced in application authorization and tested again in sensitiv
 
 - Store database, object-storage, OCR, notification, and LLM credentials in a secret manager.
 - Never log receipt contents, document binaries, access tokens, or LLM prompts containing sensitive finance data.
-- Encrypt PostgreSQL and object storage at rest; use TLS in transit.
+- Encrypt the SQLite database file and object storage at rest; use TLS in transit.
 - Use private object storage containers/buckets and short-lived authorized download URLs.
 - Hash invite codes at rest and expire/revoke them.
 - Validate upload MIME type, size, extension, and malware status before processing.
@@ -59,7 +59,7 @@ Audit events should contain actor, tenant, action, resource type/id, result, cor
 
 ## Reliability and recovery
 
-- PostgreSQL: automated backups, point-in-time recovery, replica/restore tests.
+- SQLite: encrypted snapshots, transactionally consistent backup procedure, restore tests, and WAL checkpoint monitoring.
 - Object storage: versioning and lifecycle rules for documents.
 - Outbox: retry with exponential backoff, dead-letter state, and operator replay.
 - Workers: leases, idempotency keys, bounded retries, and tenant-aware failure records.
@@ -80,4 +80,4 @@ Metrics should be aggregated by module and tenant plan/size rather than exposing
 
 ## Capacity and evolution
 
-Start with PostgreSQL plus object storage and a worker process. Add Redis for high-volume caching/rate limits. Add a broker when outbox volume or independent scaling requires it. Split modules into services only after ownership, traffic, and operational boundaries justify the cost; retain the same tenant-aware ports and event contracts.
+Start with SQLite plus object storage and a worker process. Add Redis for high-volume caching/rate limits. Move to a server database when concurrent writes or multiple active replicas exceed SQLite's single-writer model. Add a broker when outbox volume or independent scaling requires it. Split modules into services only after ownership, traffic, and operational boundaries justify the cost; retain the same tenant-aware ports and event contracts.

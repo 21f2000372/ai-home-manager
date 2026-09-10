@@ -13,11 +13,11 @@ This folder translates the [user stories](../../requirements/ai_home_manager_use
 
 ## Recommended backend data stack
 
-- **PostgreSQL**: primary relational database and system of record.
-- **PostgreSQL Row-Level Security**: defense-in-depth tenant isolation where supported by the chosen deployment model.
+- **SQLite**: primary relational database and system of record for the modular-monolith MVP.
+- **SQLite foreign keys and application tenant guards**: tenant isolation enforcement; SQLite has no built-in Row-Level Security.
 - **Object storage** such as Azure Blob Storage or S3-compatible storage: receipt, bill, warranty, image, and PDF binaries.
 - **Redis**: optional cache, rate-limit store, distributed lock, and short-lived job coordination. It is not the source of truth.
-- **PostgreSQL `pgvector`**: optional vector search for conversation memory; introduce it only when semantic retrieval is required.
+- **SQLite FTS5**: optional full-text search for tasks, documents, and conversation text. Semantic vector retrieval is deferred until scale justifies a separate service.
 - **Outbox table plus worker**: reliable domain-event delivery without requiring a separate message broker in the MVP.
 
-The MVP should avoid adding a separate document database, graph database, or vector database. The stories are transactional and relational: memberships, roles, tasks, inventory, expenses, budgets, bills, repairs, and tenant boundaries require ACID transactions and referential integrity.
+The MVP should avoid adding a separate document database, graph database, or vector database. The stories are transactional and relational: memberships, roles, tasks, inventory, expenses, budgets, bills, repairs, and tenant boundaries require ACID transactions and referential integrity. SQLite is appropriate for the initial bounded deployment; move to a server database when concurrent write volume, replicas, or independent horizontal scaling becomes a requirement.

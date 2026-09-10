@@ -1,6 +1,6 @@
 # Relational Schema
 
-The schema is organized by bounded component ownership. Modules share one PostgreSQL database in the MVP, but each module owns its tables and accesses another module only through ports or events.
+The schema is organized by bounded component ownership. Modules share one SQLite database in the MVP, but each module owns its tables and accesses another module only through ports or events.
 
 ## Identity and tenant tables
 
@@ -174,7 +174,7 @@ budgets ||--o{ expenses : category / period
 - `outbox_messages`: unique `(tenant_id, event_id)`.
 - `job_runs`: unique `(tenant_id, job_type, idempotency_key)`.
 - `document_links`: unique `(tenant_id, linked_domain, linked_record_id)` where the domain permits one link.
-- Cross-tenant foreign keys must be rejected. Composite tenant-aware references are preferred where supported.
+- Cross-tenant foreign keys must be rejected by application validation and composite tenant-aware references. Enable `PRAGMA foreign_keys = ON` for every connection.
 
 ### Indexes
 
@@ -186,6 +186,19 @@ budgets ||--o{ expenses : category / period
 - Finance status: `(tenant_id, category, occurred_at)`.
 - Bills and warranties: `(tenant_id, due_at)` and `(tenant_id, warranty_ends_at)`.
 - Outbox polling: `(status, available_at, created_at)`.
+
+## SQLite connection and migration settings
+
+Apply these settings for every database connection:
+
+```sql
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
+PRAGMA synchronous = NORMAL;
+```
+
+Keep write transactions short because SQLite serializes writers. Run migrations through one migration coordinator, use forward-only versioned migrations, and never perform schema changes concurrently from multiple application instances.
 
 ## Migration rules
 
