@@ -1,0 +1,58 @@
+{
+  "name": "ai-home-manager",
+  "version": "1.0.0",
+  "description": "A multi-agent AI Home Manager for intelligent, secure, and personalized household management.",
+  "private": true,
+  "main": "index.js",
+  "directories": {
+      "doc": "docs"
+  },
+  "scripts": {
+     "dev": "vite",
+     "build": "tsc -b && vite build",
+    "preview": "vite preview",
+     "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21f2000372/ai-home-manager.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/21f2000372/ai-home-manager/issues"
+  },
+  "homepage": "https://github.com/21f2000372/ai-home-manager#readme",
+  "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
+    "@tanstack/react-query": "^5.102.8",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "lucide-react": "^1.46.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-hook-form": "^7.88.0",
+    "react-router-dom": "^7.18.3",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.5",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react-swc": "^4.3.3",
+    "jsdom": "^30.0.1",
+    "msw": "^2.15.0",
+    "playwright": "^1.63.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
+  }
+}
