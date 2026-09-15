@@ -2,13 +2,14 @@
 
 ## 1. Implementation baseline
 
-Build the frontend as a React + TypeScript application using feature modules aligned with the backend components and user stories.
+Build the frontend as a Vite-powered React + TypeScript application in `frontend/`, using feature modules aligned with the backend components and user stories.
 
 | Concern | Recommended library / approach | Ownership rule |
 |---|---|---|
 | UI runtime | React 19 + TypeScript strict mode | Components receive typed props and emit semantic callbacks |
-| Routing | Next.js App Router | Route layouts enforce authentication, tenant membership, and capabilities |
-| Styling | Tailwind CSS + accessible headless primitives | Design-system components own visual behavior |
+| Build/runtime | Vite + React plugin | Fast local development and static production output |
+| Routing | React Router | The router owns URL mapping; route layouts enforce authentication, tenant membership, and capabilities |
+| Styling | Tailwind CSS v4 + accessible headless primitives | Design-system components own visual behavior |
 | Server state | TanStack Query | All remote data, mutations, retries, and invalidation live here |
 | Global client state | Zustand | Only session shell, active tenant selection, and non-server UI preferences |
 | Forms | React Hook Form | Form draft and submission lifecycle stay local to the form |
@@ -20,7 +21,7 @@ Build the frontend as a React + TypeScript application using feature modules ali
 | Testing | Vitest, Testing Library, MSW, Playwright | Test component contracts, API behavior, and user journeys |
 | Error monitoring | Sentry or equivalent | Capture route, feature, tenant-safe correlation data, never sensitive payloads |
 
-The repository does not currently lock a framework configuration. This plan assumes Next.js App Router, but the boundaries remain valid for React Router or another React host.
+The frontend host is now fixed as Vite + React Router. The repository root contains documentation; all frontend commands and generated artifacts belong under `frontend/`.
 
 ## 2. Delivery principles
 
@@ -32,59 +33,123 @@ The repository does not currently lock a framework configuration. This plan assu
 - **Feature modules do not import sibling stores.** Cross-domain views use page-level composition or backend overview/chat responses.
 - **Async agent work is observable.** Plans, step status, results, evidence, partial failures, retry, and cancel are modeled as first-class UI state.
 
-## 3. Recommended project structure
+## 3. SOLID and dependency-boundary principles
+
+The frontend is organized for high cohesion and low coupling. Each module should have one clear reason to change, expose a small public contract, and depend on stable abstractions rather than concrete sibling implementations.
+
+### Single Responsibility Principle
+
+- `router.tsx` maps URLs to application compositions; it does not fetch domain data or contain feature business rules.
+- `AppShell` composes layout regions; `Sidebar`, `PrimaryNavigation`, `TenantSwitcher`, `TopBar`, and `SidebarFooter` own their respective UI behavior.
+- `WorkspacePage` composes a page; `WorkspaceHeader`, `OverviewDashboard`, `MetricCard`, and `TodayActivity` own focused presentation responsibilities.
+- Feature API hooks own server communication and cache invalidation; feature components own rendering and user interaction.
+- Zustand stores own coordination state only. They do not call APIs or store domain entities.
+
+### Open/Closed Principle
+
+- Add navigation entries through `navigation.ts` rather than modifying sidebar rendering logic.
+- Add tenant routes through the route configuration rather than adding conditional branches to `AppShell`.
+- Extend feature views with new components and typed props; avoid changing shared primitives for one feature-specific case.
+
+### Liskov Substitution Principle
+
+- Shared design-system components must honor their declared prop and callback contracts in every feature.
+- Loading, empty, error, forbidden, and success states must be interchangeable view states for the same feature boundary.
+- Route-level guards must preserve the expected outlet contract whether access is granted or denied.
+
+### Interface Segregation Principle
+
+- Components receive only the props they render or use; do not pass entire stores, query clients, or domain aggregates into presentational components.
+- Export feature hooks and components through `index.ts`; keep DTO mapping, query keys, and transport details private to the feature.
+- Define narrow interfaces for tenant context, capabilities, notifications, and API request context.
+
+### Dependency Inversion Principle
+
+- UI components depend on typed feature hooks or callbacks, not directly on `fetch`, browser storage, or TanStack Query internals.
+- Feature modules depend on the shared typed API transport and query-key factories, not on sibling feature modules.
+- The router and shell depend on route and capability contracts; backend authorization remains the source of truth.
+
+### Coupling rules
+
+- Allowed direction: `app -> components/features -> lib/stores`; shared libraries must not import feature components.
+- Feature modules must not import sibling stores or reach into sibling implementation folders.
+- Cross-feature workflows use page-level composition, shared typed mutations, or backend overview/conversation responses.
+- Every tenant-scoped query, mutation, route, stream, and persisted selection carries `tenantId` explicitly.
+- No component owns both transport concerns and domain presentation.
+- Circular imports are prohibited; if two modules need each other, extract their shared contract into `lib/` or a small shared component.
+
+## 4. Recommended project structure
 
 ```text
-src/
-├── app/                              # Next.js routes and layouts only
-│   ├── (public)/welcome/page.tsx
-│   ├── (auth)/households/new/page.tsx
-│   ├── (auth)/households/join/page.tsx
-│   └── (tenant)/t/[tenantId]/
-│       ├── layout.tsx
-│       ├── overview/page.tsx
-│       ├── people/page.tsx
-│       ├── tasks/page.tsx
-│       ├── tasks/new/page.tsx
-│       ├── calendar/page.tsx
-│       ├── inventory/page.tsx
-│       ├── grocery/page.tsx
-│       ├── commodities/page.tsx
-│       ├── finance/page.tsx
-│       ├── maintenance/page.tsx
-│       ├── documents/page.tsx
-│       └── chat/page.tsx
-├── features/
-│   ├── people-permissions/
-│   ├── tasks-schedule/
-│   ├── food-inventory/
-│   ├── finance-budget/
-│   ├── maintenance/
-│   ├── documents/
-│   └── conversation/
-├── components/
-│   ├── app-shell/
-│   ├── design-system/
-│   ├── tenant/
-│   ├── permissions/
-│   └── feedback/
-├── lib/
-│   ├── api/                          # transport and typed endpoint clients
-│   ├── auth/                         # session adapter
-│   ├── query/                        # QueryClient and cache policies
-│   ├── tenant/                       # TenantContext resolution
-│   ├── validation/                   # shared Zod schemas
-│   ├── dates/
-│   └── telemetry/
-├── stores/
-│   ├── session-store.ts              # minimal Zustand state
-│   ├── tenant-store.ts               # active tenant selector only
-│   ├── shell-store.ts                # navigation/preferences
-│   └── notification-store.ts         # ephemeral toast queue
-└── test/
-    ├── fixtures/
-    ├── msw/
-    └── e2e/
+frontend/
+├── index.html
+├── package.json
+├── vite.config.ts                    # Vite, @/* alias, mounted-drive polling
+├── tsconfig*.json                     # strict TypeScript project references
+└── src/
+  ├── app/
+  │   ├── app.tsx                    # application entry composition
+  │   └── router.tsx                 # React Router route definitions
+  ├── features/                      # bounded feature modules
+  │   ├── people-permissions/
+  │   ├── tasks-schedule/
+  │   ├── food-inventory/
+  │   ├── finance-budget/
+  │   ├── maintenance/
+  │   ├── documents/
+  │   └── conversation/
+  ├── components/
+  │   ├── app-shell/                 # sidebar, navigation, tenant switcher, top bar
+  │   ├── workspace/                 # page framing and overview composition
+  │   ├── design-system/
+  │   ├── tenant/
+  │   ├── permissions/
+  │   └── feedback/
+  ├── lib/                           # transport, query, validation, dates
+  ├── stores/                        # coordination state only
+  └── test/                          # fixtures, MSW, and E2E test boundaries
+```
+
+### Application route contract
+
+React Router owns the tenant URL boundary:
+
+```text
+/t/:tenantId/overview
+/t/:tenantId/people
+/t/:tenantId/tasks
+/t/:tenantId/calendar
+/t/:tenantId/inventory
+/t/:tenantId/grocery
+/t/:tenantId/finance
+/t/:tenantId/maintenance
+/t/:tenantId/documents
+/t/:tenantId/chat
+```
+
+`AppShell` is a composition root only. Its focused children own one responsibility each:
+
+```text
+components/app-shell/
+├── app-shell.tsx                      # layout composition and Outlet
+├── sidebar.tsx                        # sidebar composition
+├── primary-navigation.tsx             # route links
+├── navigation.ts                     # navigation metadata
+├── tenant-switcher.tsx                # household selection UI
+├── brand.tsx                          # product identity
+├── sidebar-footer.tsx                 # profile/settings actions
+└── top-bar.tsx                        # header actions
+```
+
+Workspace pages follow the same cohesion rule:
+
+```text
+components/workspace/
+├── workspace-page.tsx                 # page composition
+├── workspace-header.tsx               # shared page framing
+├── overview-dashboard.tsx             # overview-only composition
+├── metric-card.tsx                    # reusable metric presentation
+└── today-activity.tsx                 # today activity presentation
 ```
 
 ### Feature module contract
@@ -112,7 +177,7 @@ features/tasks-schedule/
 
 `index.ts` exports the feature's public components and hooks. Internal modules remain private to the feature.
 
-## 4. Zustand state ownership plan
+## 5. Zustand state ownership plan
 
 ### Session store
 
@@ -162,7 +227,7 @@ The membership, role, and capability data come from TanStack Query. On a tenant 
 - Store selectors must be narrow and stable.
 - Clear session and tenant stores on sign out, membership revocation, or unrecoverable `401`.
 
-## 5. TanStack Query plan
+## 6. TanStack Query plan
 
 ### Query client defaults
 
@@ -212,7 +277,7 @@ export const tenantKeys = {
 | Documents | Documents, classification status, links | Upload, classify, link | Documents and linked domain view |
 | Conversation | Sessions, messages, agent run, run events | Send message, confirm action, retry step, cancel run | Session, run, related feature summaries |
 
-## 6. API and transport implementation
+## 7. API and transport implementation
 
 Create a single transport wrapper with typed request/response boundaries:
 
@@ -242,7 +307,7 @@ The wrapper must:
 
 Use generated OpenAPI types where available. If generation is not available, define DTOs and Zod schemas at the API boundary and map DTOs to feature view models.
 
-## 7. Multi-agent frontend implementation
+## 8. Multi-agent frontend implementation
 
 ### Agent run lifecycle
 
@@ -288,7 +353,31 @@ function useAgentRun(tenantId: string, runId: string, enabled: boolean) {
 
 Do not implement agent selection in the browser. The backend orchestrator returns the authorized plan.
 
-## 8. Implementation phases
+## 9. Local development and validation
+
+Run frontend commands from the `frontend/` directory:
+
+```bash
+cd frontend
+npm install
+npm run dev -- --host 0.0.0.0
+```
+
+The application is available at `/t/home-lakeview/overview`. When the repository is opened from its root, the equivalent command is:
+
+```bash
+npm --prefix frontend run dev -- --host 0.0.0.0
+```
+
+`vite.config.ts` enables polling because the workspace is on a mounted drive that can exceed Linux's native file-watcher limit. Production validation uses the strict TypeScript and Vite build:
+
+```bash
+npm run build
+```
+
+ESLint is intentionally not part of this project workflow. TypeScript strict mode and the production build are the current static validation boundary.
+
+## 10. Implementation phases
 
 ### Phase 0: foundation
 
@@ -341,7 +430,7 @@ Stories: US-4.1 through US-4.4 and US-6.1.
 
 Stories: US-5.1 through US-5.3 and US-6.2 through US-6.3.
 
-## 9. Testing plan
+## 11. Testing plan
 
 ### Unit and component tests
 
@@ -369,7 +458,7 @@ Stories: US-5.1 through US-5.3 and US-6.2 through US-6.3.
 - Upload a receipt and confirm the extracted expense after review.
 - Ask a cross-domain question and verify authorized parallel agents, evidence, partial failure recovery, and tenant-scoped memory.
 
-## 10. Definition of done
+## 12. Definition of done
 
 A frontend slice is complete when:
 
