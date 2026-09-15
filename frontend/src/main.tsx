@@ -1,17 +1,16 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router-dom';
-import { queryClient } from '@/lib/query/query-client';
 import { App } from '@/app/app';
+import { AppProviders } from '@/app/providers';
+import { ErrorBoundary } from '@/components/feedback/error-boundary';
 import './index.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+    <ErrorBoundary>
+      <AppProviders>
         <App />
-      </BrowserRouter>
-    </QueryClientProvider>
+      </AppProviders>
+    </ErrorBoundary>
   </StrictMode>,
 );
