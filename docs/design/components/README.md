@@ -2,6 +2,8 @@
 
 These component designs are derived from [the user stories](../../requirements/ai_home_manager_user_stories.md). Each file owns one bounded responsibility and contains a structural PlantUML component diagram, an internal structure diagram, a tenant-aware class diagram, story coverage, responsibilities, and domain rules.
 
+For runtime delegation, security gates, and cross-domain agent coordination, see the [Agentic Home Operations Workflows](../agentic-workflows/README.md).
+
 The diagrams use components, interfaces, adapters, repositories, and dependency relationships. They intentionally do not use actors or user-action bubbles as the primary notation: user stories explain behavior, while these diagrams show the software parts that implement and collaborate for that behavior. The notation follows the [PlantUML component diagram documentation](https://plantuml.com/component-diagram).
 
 Each feature has both an external component view and an internal structure view. The internal diagrams use nested UML 2 components as interaction points because the installed PlantUML renderer does not support the newer `portin` and `portout` keywords; their direction and contract are shown by the connector direction and the adjacent provided/required interface.
