@@ -15,7 +15,7 @@ langchain-core==0.3.5
 openai==1.44.1            # used against the OpenRouter API (base_url override)
 
 # --- RAG: embeddings + vector store ---
-chromadb==0.5.5
+chromadb>=0.5.5
 
 # --- Utilities ---
 python-dotenv==1.0.1

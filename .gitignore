@@ -243,3 +243,4 @@ ai_home_manager.db
 
 # ChromaDB persistent vector store
 chroma_store/
+database/
