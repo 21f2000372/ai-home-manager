@@ -3,8 +3,8 @@
 
 :root {
   font-family: 'DM Sans', sans-serif;
-  color: #102a43;
-  background: #f4f7f9;
+  color: #17233d;
+  background: #f4f6f5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -12,3 +12,13 @@
 body { margin: 0; min-width: 320px; }
 h1, h2, h3 { font-family: 'Space Grotesk', sans-serif; }
 button, a { -webkit-tap-highlight-color: transparent; }
+
+* { box-sizing: border-box; }
+
+.app-root { min-height: 100vh; background: var(--canvas); color: var(--ink); }
+.app-root[data-theme='dark'] { --canvas: #17233d; --surface: #202f4b; --surface-muted: #2b3b58; --ink: #f4f6f5; --muted: #b5c1d2; --line: #40516e; --accent-soft: #274c4a; }
+.app-root[data-theme='light'] { --canvas: #f4f6f5; --surface: #ffffff; --surface-muted: #eef3f1; --ink: #17233d; --muted: #667085; --line: #dbe3e0; --accent-soft: #e1f1eb; }
+.app-root[data-font-scale='compact'] { font-size: 93%; }
+.app-root[data-font-scale='large'] { font-size: 110%; }
+.surface { background: var(--surface); border-color: var(--line); }
+.muted { color: var(--muted); }

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="HomeOps prototype dossier: household operations UI, modules, responsive behavior, and implementation boundaries.">
+  <title>HomeOps Prototype | Frontend Dossier</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" data-drawer aria-label="Prototype dossier navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">H</span><div><strong>HomeOps</strong><small>Prototype dossier</small></div></div>
+      <button class="household" data-toast="Household switcher is documented as a tenant-scoped control."><small>Active household</small><strong>The Sharma Family</strong></button>
+      <nav class="nav" aria-label="Dossier sections">
+        <a class="active" href="index.html">Overview</a><a href="modules.html">All modules</a><a href="responsive.html">Responsive behavior</a><a href="architecture.html">Architecture rules</a><a href="interactions.html">Interactions & states</a>
+      </nav>
+      <div class="sidebar-footer"><span class="sidebar-label">Captured source</span><p>storied-froyo-3feff7.netlify.app</p><p>Prototype v1.0 · 2026-09-16</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><button class="button secondary mobile-only" data-drawer-toggle aria-expanded="false">Menu</button><h1>HomeOps frontend prototype</h1><p>Privacy-Aware Multi-Agent Household Coordinator</p></div><div class="actions"><button class="button secondary" data-theme-toggle>Theme preview</button><button class="button warning" data-toast="Prototype scenario controls are documented and ready for implementation.">Run Main Scenario Demo</button></div></header>
+      <div class="content">
+        <p class="eyebrow">Highest-priority UI reference</p>
+        <h2>The Sharma Family household command center</h2>
+        <p class="lead">This dossier extracts the supplied HomeOps prototype into a durable, browsable HTML reference. It records visible modules, content, actions, states, device behavior, design tokens, and the component boundaries required to implement it with high cohesion and low coupling.</p>
+        <div class="grid four" style="margin: 28px 0">
+          <article class="card metric"><span>Household members</span><strong>4</strong><span>Active and role-aware</span></article>
+          <article class="card metric"><span>Household domains</span><strong>6</strong><span>Cross-domain operations</span></article>
+          <article class="card metric"><span>Agents synced</span><strong>3 +</strong><span>Orchestrator connected</span></article>
+          <article class="card metric"><span>Plan state</span><strong>Baseline</strong><span>Awaiting weekend plan</span></article>
+        </div>
+        <div class="grid two">
+          <section class="card soft"><div class="card-header"><div><h3>Upcoming challenge detected</h3><p>Assistant insight card</p></div><span class="badge teal">Verified context</span></div><p>Mom travels until Friday, four guests arrive Saturday, Dad's low-salt constraint is verified, and Grandma's prescription is low.</p><button class="button" data-toast="Weekend coordination plan opened for confirmation.">Coordinate Now</button></section>
+          <section class="card"><div class="card-header"><div><h3>System & command</h3><p>Live operational state</p></div><span class="badge teal">Live</span></div><div class="list"><div class="list-item"><div><strong>Agent Reasoning</strong><span class="meta">Planning and bounded results visible</span></div><span class="badge blue">Live</span></div><div class="list-item"><div><strong>Shared State</strong><span class="meta">Household context synchronized</span></div><span class="badge blue">Live</span></div><div class="list-item"><div><strong>Coordinator</strong><span class="meta">Awaiting Weekend Plan</span></div><span class="badge">Baseline</span></div></div></section>
+        </div>
+        <section class="card" style="margin-top: 18px"><div class="card-header"><div><h3>Active household tasks</h3><p>Tasks assigned across family members based on availability.</p></div><button class="button secondary" data-toggle="#task-details" aria-expanded="false">View All</button></div><div id="task-details" class="list"><div class="list-item"><div><strong>Water balcony plants & garden</strong><span class="meta">Aarav Sharma · Daily (5:00 PM)</span></div><span class="badge coral">medium</span></div><div class="list-item"><div><strong>Review monthly broadband utility invoice</strong><span class="meta">Rajesh Sharma · Thursday</span></div><span class="badge teal">low</span></div><div class="list-item"><div><strong>Restock weekly pantry snacks</strong><span class="meta">Priya Sharma · Wednesday</span></div><span class="badge coral">medium</span></div></div></section>
+        <div class="grid two" style="margin-top: 18px">
+          <section class="card"><div class="card-header"><div><h3>Upcoming household timeline</h3><p>Chronological sequence of family events and planned operations.</p></div><button class="button secondary" data-toast="Full calendar view selected.">Full Calendar</button></div><div class="timeline" style="margin-top: 20px"><div class="timeline-item"><strong>Aarav Inter-School Football Match</strong><div class="meta">Thursday · 4:30 PM – 6:00 PM · School Sports Complex · school</div></div><div class="timeline-item"><strong>Priya Returning from Work Trip</strong><div class="meta">Friday · 7:00 PM · Kempegowda Int'l Airport (BLR) · travel</div></div><div class="timeline-item"><strong>4 Relatives Arrive for Weekend Stay</strong><div class="meta">Saturday · 11:00 AM · Home (Green Meadows) · guest</div></div></div></section>
+          <section class="card warning"><div class="card-header"><div><h3>Pantry restock alerts</h3><p>Items below the household threshold.</p></div><span class="badge coral">4 alerts</span></div><div class="list"><div class="list-item"><div><strong>Fresh Cow Milk</strong><span class="meta">Need +3L for 4 guests</span></div><span class="badge">0.5 Litre</span></div><div class="list-item"><div><strong>Vegetables</strong><span class="meta">Tomatoes, onions, paneer</span></div><span class="badge">1.2 kg</span></div><div class="list-item"><div><strong>Guest Refreshment Snacks & Dry Fruits</strong><span class="meta">Needs procurement for 4 relatives</span></div><span class="badge">0g</span></div><div class="list-item"><div><strong>Grandma BP/Diabetes Maintenance Rx</strong><span class="meta">Urgent monthly refill required</span></div><span class="badge coral">2 days left</span></div></div></section>
+        </div>
+        <section class="card" style="margin-top: 18px"><div class="card-header"><div><h3>AI Household Insights</h3><p>Verified reasoning from household context.</p></div><span class="badge blue">Governance-aware</span></div><div class="grid three" style="margin-top: 16px"><div class="callout"><strong>Dietary Constraint Guard</strong><p class="note">Dad's low-salt diet directive (DOC-MED-01) is enforced on upcoming grocery procurement lists.</p></div><div class="callout"><strong>Mom Travel Balancing</strong><p class="note">Mom's tasks have been distributed to Rajesh and Aarav.</p></div><div class="callout"><strong>Financial Buffer</strong><p class="note">₹2,400 remaining safely covers unexpected contingencies for the weekend.</p></div></div></section>
+        <section class="card" style="margin-top: 18px"><div class="card-header"><div><h3>Reference links</h3><p>Continue through the extracted prototype details.</p></div></div><div class="actions" style="justify-content: flex-start; margin-top: 14px"><a class="button secondary" href="modules.html">Explore all modules</a><a class="button secondary" href="responsive.html">Review device behavior</a><a class="button secondary" href="architecture.html">Read architecture rules</a></div></section>
+      </div>
+    </main>
+  </div>
+  <script src="prototype.js"></script>
+</body>
+</html>
