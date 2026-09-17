@@ -1,14 +1,4 @@
-"""Password hashing helpers.
-
-Prefers bcrypt (via passlib) when the dependency is installed. Falls back to a
-standard-library PBKDF2-HMAC-SHA256 implementation so the database and seed
-script work before ``pip install -r requirements.txt`` has been run.
-
-Hash format for the fallback: ``pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>``
-This is self-describing, so ``verify_password`` can detect which scheme a stored
-hash uses. bcrypt hashes (``$2b$...``) are handled by passlib when present.
-"""
-
+"""Password hashing helpers using pure bcrypt with a PBKDF2 fallback."""
 from __future__ import annotations
 
 import hashlib
@@ -18,18 +8,18 @@ import os
 _PBKDF2_ITERATIONS = 260_000
 _PBKDF2_PREFIX = "pbkdf2_sha256"
 
-try:  # Preferred: bcrypt via passlib
-    from passlib.context import CryptContext
-
-    _pwd_context: "CryptContext | None" = CryptContext(schemes=["bcrypt"], deprecated="auto")
-except Exception:  # pragma: no cover - fallback path when passlib is absent
-    _pwd_context = None
+try:
+    import bcrypt
+    _HAS_BCRYPT = True
+except ImportError:
+    _HAS_BCRYPT = False
 
 
 def hash_password(plain: str) -> str:
     """Hash a plaintext password for storage."""
-    if _pwd_context is not None:
-        return _pwd_context.hash(plain)
+    if _HAS_BCRYPT:
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(plain.encode("utf-8"), salt).decode("utf-8")
 
     salt = os.urandom(16)
     digest = hashlib.pbkdf2_hmac(
@@ -39,7 +29,7 @@ def hash_password(plain: str) -> str:
 
 
 def verify_password(plain: str, stored_hash: str) -> bool:
-    """Verify a plaintext password against a stored hash (either scheme)."""
+    """Verify a plaintext password against a stored hash."""
     if stored_hash.startswith(_PBKDF2_PREFIX + "$"):
         try:
             _, iterations_s, salt_hex, hash_hex = stored_hash.split("$", 3)
@@ -53,10 +43,12 @@ def verify_password(plain: str, stored_hash: str) -> bool:
         )
         return hmac.compare_digest(candidate, expected)
 
-    # bcrypt / other passlib-managed hash
-    if _pwd_context is not None:
+    if _HAS_BCRYPT:
         try:
-            return _pwd_context.verify(plain, stored_hash)
+            return bcrypt.checkpw(
+                plain.encode("utf-8"), stored_hash.encode("utf-8")
+            )
         except Exception:
             return False
+
     return False
