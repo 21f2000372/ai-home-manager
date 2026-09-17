@@ -6,6 +6,7 @@ from flask_cors import CORS
 
 from app.config import config
 from app.routes.auth_routes import auth_bp
+from app.routes.task_routes import task_bp
 
 
 def create_app() -> Flask:
@@ -16,6 +17,7 @@ def create_app() -> Flask:
 
     # Register blueprints
     app.register_blueprint(auth_bp)
+    app.register_blueprint(task_bp)
 
     @app.route("/health", methods=["GET"])
     def health_check():
@@ -26,4 +28,4 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(debug=config.FLASK_ENV == "development")
+    app.run(host="0.0.0.0", port=5000, debug=config.FLASK_ENV == "development")
