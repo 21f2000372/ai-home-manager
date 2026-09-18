@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 
 from langchain_core.tools import tool
-
+from typing import Optional
 from app.db.base import SessionLocal
 from app.models.enums import IssueStatus, Priority
 from app.models.maintenance import (
@@ -123,11 +123,11 @@ def get_appliance(appliance_id: str) -> str:
 @tool
 def update_appliance(
     appliance_id: str,
-    name: str | None = None,
-    brand: str | None = None,
-    model: str | None = None,
-    purchased_at: str | None = None,
-    warranty_ends_at: str | None = None,
+    name: Optional[str] = None,
+    brand: Optional[str] = None,
+    model: Optional[str] = None,
+    purchased_at: Optional[str] = None,
+    warranty_ends_at: Optional[str] = None,
 ) -> str:
     """Update an existing appliance."""
     session = SessionLocal()
@@ -333,10 +333,10 @@ def get_issue(issue_id: str) -> str:
 @tool
 def update_issue(
     issue_id: str,
-    description: str | None = None,
-    status: str | None = None,
-    priority: str | None = None,
-    appliance_id: str | None = None,
+    description: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    appliance_id: Optional[str] = None,
 ) -> str:
     """Update an existing maintenance issue."""
     session = SessionLocal()
@@ -533,12 +533,12 @@ def get_repair(repair_id: str) -> str:
 @tool
 def update_repair(
     repair_id: str,
-    appliance_id: str | None = None,
-    serviced_at: str | None = None,
-    provider: str | None = None,
-    cost_minor: int | None = None,
-    currency: str | None = None,
-    notes: str | None = None,
+    appliance_id: Optional[str] = None,
+    serviced_at: Optional[str] = None,
+    provider: Optional[str] = None,
+    cost_minor: Optional[int] = None,
+    currency: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> str:
     """Update an existing repair."""
     session = SessionLocal()

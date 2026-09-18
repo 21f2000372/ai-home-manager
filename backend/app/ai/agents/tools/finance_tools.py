@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from app.db.base import SessionLocal
 from app.models.enums import BudgetPeriod
 from app.models.finance import Budget, Expense, RecurringBill
-
+from typing import Optional
 
 def _parse_datetime(value: str, field_name: str) -> datetime | None:
     if not value:
@@ -135,12 +135,12 @@ def get_expense(expense_id: str) -> str:
 @tool
 def update_expense(
     expense_id: str,
-    amount_minor: int | None = None,
-    currency: str | None = None,
-    category: str | None = None,
-    description: str | None = None,
-    occurred_at: str | None = None,
-    document_id: str | None = None,
+    amount_minor: Optional[int] = None ,
+    currency: Optional[str] = None,
+    category: Optional[str] = None,
+    description: Optional[str] = None,
+    occurred_at: Optional[str] = None,
+    document_id: Optional[str] = None,
 ) -> str:
     """Update an existing expense."""
     session = SessionLocal()
@@ -348,12 +348,12 @@ def get_budget(budget_id: str) -> str:
 @tool
 def update_budget(
     budget_id: str,
-    category: str | None = None,
-    limit_minor: int | None = None,
-    currency: str | None = None,
-    period: str | None = None,
-    period_start: str | None = None,
-    period_end: str | None = None,
+    category: Optional[str] = None,
+    limit_minor: Optional[int] = None,
+    currency: Optional[str] = None,
+    period: Optional[str] = None,
+    period_start: Optional[str] = None,
+    period_end: Optional[str] = None,
 ) -> str:
     """Update an existing budget."""
     session = SessionLocal()
@@ -464,7 +464,7 @@ def delete_budget(budget_id: str) -> str:
 def create_recurring_bill(
     payee: str,
     due_at: str,
-    expected_amount_minor: int | None = None,
+    expected_amount_minor: Optional[int] = None,
     currency: str = "USD",
     category: str = "",
     recurrence: str = "MONTHLY",
@@ -557,12 +557,12 @@ def get_recurring_bill(bill_id: str) -> str:
 @tool
 def update_recurring_bill(
     bill_id: str,
-    payee: str | None = None,
-    due_at: str | None = None,
-    expected_amount_minor: int | None = None,
-    currency: str | None = None,
-    category: str | None = None,
-    recurrence: str | None = None,
+    payee: Optional[str] = None,
+    due_at: Optional[str] = None,
+    expected_amount_minor: Optional[int] = None,
+    currency: Optional[str] = None,
+    category: Optional[str] = None,
+    recurrence: Optional[str] = None,
 ) -> str:
     """Update a recurring bill."""
     session = SessionLocal()

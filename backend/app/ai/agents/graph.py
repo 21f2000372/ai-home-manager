@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from langgraph.graph import END, StateGraph
-
+from typing import Optional
 from app.ai.agents.actions import (
     next_action_node,
     route_after_action,
@@ -124,7 +124,7 @@ def run_agent(
     session_id: str,
     user_id: str,
     role: str,
-    conversation_id: str | None = None,
+    conversation_id: Optional[str] = None,
 ) -> AgentState:
     """Entry point used by the Flask route: runs one full turn through the graph."""
     app_graph = build_graph()
