@@ -1,15 +1,26 @@
 import { create } from 'zustand';
+import { clearAccessToken, hasAccessToken } from '@/lib/auth/auth-adapter';
+
+export type SessionUser = {
+  id: string;
+  email: string;
+  name?: string;
+  role: 'Admin' | 'Adult' | 'Child' | 'Guest';
+};
 
 type SessionState = {
-  userId: string | null;
+  user: SessionUser | null;
   status: 'unknown' | 'authenticated' | 'unauthenticated' | 'refreshing';
-  setAuthenticated: (userId: string) => void;
+  setAuthenticated: (user: SessionUser) => void;
   clear: () => void;
 };
 
 export const useSessionStore = create<SessionState>((set) => ({
-  userId: 'demo-user',
-  status: 'authenticated',
-  setAuthenticated: (userId) => set({ userId, status: 'authenticated' }),
-  clear: () => set({ userId: null, status: 'unauthenticated' }),
+  user: null,
+  status: hasAccessToken() ? 'authenticated' : 'unauthenticated',
+  setAuthenticated: (user) => set({ user, status: 'authenticated' }),
+  clear: () => {
+    clearAccessToken();
+    set({ user: null, status: 'unauthenticated' });
+  },
 }));

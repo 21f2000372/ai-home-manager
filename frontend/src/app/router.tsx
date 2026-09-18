@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { RequireSession } from '@/app/require-session';
 import { AppShell } from '@/components/app-shell/app-shell';
 import { WorkspacePage } from '@/components/workspace/workspace-page';
+import { AuthScreen } from '@/features/auth/auth-screen';
 
 const workspaceRoutes = [
   { path: 'overview', label: 'Overview', eyebrow: 'Household pulse' },
@@ -18,13 +20,16 @@ const workspaceRoutes = [
 export function Router() {
   return (
     <Routes>
-      <Route path="/t/:tenantId" element={<AppShell />}>
-        <Route index element={<Navigate to="overview" replace />} />
-        {workspaceRoutes.map((route) => (
-          <Route key={route.path} path={route.path} element={<WorkspacePage {...route} />} />
-        ))}
+      <Route path="/" element={<AuthScreen />} />
+      <Route element={<RequireSession />}>
+        <Route path="/t/:tenantId" element={<AppShell />}>
+          <Route index element={<Navigate to="overview" replace />} />
+          {workspaceRoutes.map((route) => (
+            <Route key={route.path} path={route.path} element={<WorkspacePage {...route} />} />
+          ))}
+        </Route>
       </Route>
-      <Route path="*" element={<Navigate to="/t/home-lakeview/overview" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

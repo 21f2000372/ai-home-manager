@@ -14,6 +14,8 @@ export class ApiError extends Error {
   }
 }
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
+
 export async function request<T>(path: string, init: RequestInit = {}, context: RequestContext): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
@@ -23,7 +25,10 @@ export async function request<T>(path: string, init: RequestInit = {}, context: 
   const accessToken = await (context.auth ?? cookieSessionAuth).getAccessToken();
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
 
-  const response = await fetch(path, { ...init, headers });
-  if (!response.ok) throw new ApiError(response.status, `Request failed with status ${response.status}`);
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: string; message?: string } | null;
+    throw new ApiError(response.status, payload?.error ?? payload?.message ?? `Request failed with status ${response.status}`);
+  }
   return response.json() as Promise<T>;
 }
