@@ -10,7 +10,7 @@ from app.models.enums import BudgetPeriod
 from app.models.finance import Budget, Expense, RecurringBill
 from typing import Optional
 
-def _parse_datetime(value: str, field_name: str) -> datetime | None:
+def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
     if not value:
         return None
 

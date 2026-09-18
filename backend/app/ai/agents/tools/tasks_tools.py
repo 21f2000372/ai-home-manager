@@ -10,7 +10,7 @@ from app.models.enums import Priority, TaskStatus
 from app.models.tasks import CalendarEvent, Task
 from typing import Optional
 
-def _parse_datetime(value: str, field_name: str) -> datetime | None:
+def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
     if not value:
         return None
 
