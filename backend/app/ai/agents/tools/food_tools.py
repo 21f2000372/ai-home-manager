@@ -5,7 +5,7 @@ from langchain_core.tools import tool
 
 from app.db.base import SessionLocal
 from app.models.inventory import GroceryItem, InventoryItem
-
+from typing import Optional
 
 # ============================================================
 # Grocery CRUD
@@ -117,9 +117,9 @@ def get_grocery_item(
 @tool
 def update_grocery_item(
     grocery_item_id: str,
-    name: str | None = None,
+    name: Optional[str] = None,
     quantity: float | None = None,
-    unit: str | None = None,
+    unit: Optional[str] = None,
     purchased: bool | None = None,
 ) -> str:
     """Update an existing grocery item by its stable database id."""
@@ -352,9 +352,9 @@ def get_inventory_item(
 @tool
 def update_inventory_item(
     item_id: str,
-    name: str | None = None,
+    name: Optional[str] = None,
     quantity: float | None = None,
-    unit: str | None = None,
+    unit: Optional[str] = None,
     low_stock_threshold: float | None = None,
 ) -> str:
     """Update an existing inventory item by its stable database id."""

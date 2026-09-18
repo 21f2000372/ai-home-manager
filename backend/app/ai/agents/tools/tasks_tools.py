@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from app.db.base import SessionLocal
 from app.models.enums import Priority, TaskStatus
 from app.models.tasks import CalendarEvent, Task
-
+from typing import Optional
 
 def _parse_datetime(value: str, field_name: str) -> datetime | None:
     if not value:
@@ -173,12 +173,12 @@ def get_task(task_id: str) -> str:
 @tool
 def update_task(
     task_id: str,
-    title: str | None = None,
-    description: str | None = None,
-    due_at: str | None = None,
-    assigned_to: str | None = None,
-    priority: str | None = None,
-    status: str | None = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    due_at: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    priority: Optional[str] = None,
+    status: Optional[str] = None,
 ) -> str:
     """Update an existing task by stable task id."""
     session = SessionLocal()
@@ -408,11 +408,11 @@ def get_calendar_event(event_id: str) -> str:
 @tool
 def update_calendar_event(
     event_id: str,
-    title: str | None = None,
-    starts_at: str | None = None,
-    ends_at: str | None = None,
-    owner_id: str | None = None,
-    task_id: str | None = None,
+    title: Optional[str] = None,
+    starts_at: Optional[str] = None,
+    ends_at: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> str:
     """Update an existing calendar event."""
     session = SessionLocal()

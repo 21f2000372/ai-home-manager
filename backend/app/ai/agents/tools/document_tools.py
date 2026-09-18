@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 from app.db.base import SessionLocal
 from app.models.documents import Document
 from app.models.enums import DocumentType
-
+from typing import Optional
 
 @tool
 def create_document(
@@ -105,10 +105,10 @@ def get_document(document_id: str) -> str:
 @tool
 def update_document(
     document_id: str,
-    storage_key: str | None = None,
-    document_type: str | None = None,
-    original_filename: str | None = None,
-    mime_type: str | None = None,
+    storage_key: Optional[str] = None,
+    document_type: Optional[str] = None,
+    original_filename: Optional[str] = None,
+    mime_type: Optional[str] = None,
 ) -> str:
     """Update document metadata."""
     session = SessionLocal()
