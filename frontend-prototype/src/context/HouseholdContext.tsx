@@ -96,7 +96,7 @@ export const HouseholdProvider = ({ children }) => {
   }, []);
 
   // Chat messages with initial warm household greeting
-  const [chatMessages, setChatMessages] = useState([
+  const [chatMessages, setChatMessages] = useState<any[]>([
     {
       id: 'msg-welcome',
       sender: 'assistant',

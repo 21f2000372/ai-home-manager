@@ -5,11 +5,25 @@
  */
 import { householdService } from './householdService';
 
+export const WORKFLOW_STAGES = [
+  { id: 'CAPTURE', label: 'Capture', desc: 'Record the request' },
+  { id: 'UNDERSTAND', label: 'Understand', desc: 'Identify household context' },
+  { id: 'AUTHORIZE', label: 'Authorize', desc: 'Check permissions' },
+  { id: 'UPDATE', label: 'Update', desc: 'Refresh household state' },
+  { id: 'PLAN', label: 'Plan', desc: 'Coordinate actions' },
+  { id: 'ACT', label: 'Act', desc: 'Apply approved actions' },
+  { id: 'REMEMBER', label: 'Remember', desc: 'Retain the outcome' },
+];
+
+export const AGENT_TYPES = [
+  { id: 'coordinator', name: 'Coordinator', role: 'Orchestration', description: 'Coordinates household requests.', avatar: '🤖', color: 'purple', badge: 'Coordinator' },
+];
+
 class AgentService {
   /**
    * Process natural language household request or update
    */
-  async processQuery(prompt, userId = 'rajesh') {
+  async processQuery(prompt, userId = 'rajesh', _onStepCallback?: (step: unknown) => void) {
     const activeMember = householdService.getState().members.find(m => m.id === userId) || householdService.getActiveUser();
     const cleanPrompt = prompt.trim();
     const lower = cleanPrompt.toLowerCase();

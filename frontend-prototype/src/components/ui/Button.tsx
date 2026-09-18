@@ -1,4 +1,11 @@
 import React from 'react';
+import type { LucideIcon } from 'lucide-react';
+
+type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'subtle' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+  icon?: LucideIcon;
+};
 
 /**
  * Reusable Button component styled with HomeOps palette tokens
@@ -13,7 +20,7 @@ export const Button = ({
   type = 'button',
   icon: Icon,
   ...props
-}) => {
+}: ButtonProps) => {
   const baseStyles = 'inline-flex items-center justify-center gap-2 font-medium rounded-xl transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5E9278]/50 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-[#101210] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none select-none';
 
   const sizeStyles = {

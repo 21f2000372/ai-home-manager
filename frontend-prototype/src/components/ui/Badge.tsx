@@ -1,4 +1,11 @@
 import React from 'react';
+import type { LucideIcon } from 'lucide-react';
+
+type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & {
+  variant?: string;
+  size?: 'xs' | 'sm' | 'md';
+  icon?: LucideIcon;
+};
 
 /**
  * Reusable Badge component matching HomeOps accents:
@@ -11,7 +18,7 @@ export const Badge = ({
   className = '',
   icon: Icon,
   ...props
-}) => {
+}: BadgeProps) => {
   const sizeStyles = {
     xs: 'text-[10px] px-2 py-0.5 font-medium',
     sm: 'text-xs px-2.5 py-0.5 font-medium',

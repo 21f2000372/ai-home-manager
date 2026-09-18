@@ -33,7 +33,7 @@ export const Sidebar = () => {
   });
 
   useEffect(() => {
-    localStorage.setItem('homeops_sidebar_collapsed', isCollapsed);
+    localStorage.setItem('homeops_sidebar_collapsed', String(isCollapsed));
   }, [isCollapsed]);
 
   const isRestrictedFinance = !activeUser.permissions.canViewFinances;

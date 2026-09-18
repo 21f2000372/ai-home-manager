@@ -1,5 +1,9 @@
 import React from 'react';
 
+type CardProps = React.HTMLAttributes<HTMLDivElement> & {
+  elevated?: boolean;
+};
+
 /**
  * Reusable Card component matching the HomeOps surface and border system
  */
@@ -9,7 +13,7 @@ export const Card = ({
   elevated = false,
   onClick,
   ...props
-}) => {
+}: CardProps) => {
   const isClickable = !!onClick;
 
   const handleKeyDown = (e) => {

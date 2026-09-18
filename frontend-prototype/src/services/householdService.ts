@@ -1,6 +1,11 @@
 import { INITIAL_HOUSEHOLD_DATA } from './mockData';
 
 class HouseholdService {
+  listeners: Set<(state: any) => void>;
+  activeUserId: string;
+  state: any;
+  isPlanApplied: boolean;
+
   constructor() {
     this.listeners = new Set();
     this.activeUserId = 'rajesh'; // Default: Dad (Parent Admin)
@@ -11,7 +16,9 @@ class HouseholdService {
   // Subscribe to state updates
   subscribe(listener) {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   notify() {

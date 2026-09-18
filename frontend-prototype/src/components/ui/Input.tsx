@@ -1,4 +1,10 @@
 import React from 'react';
+import type { LucideIcon } from 'lucide-react';
+
+type InputProps = React.InputHTMLAttributes<HTMLInputElement> & {
+  icon?: LucideIcon;
+  error?: React.ReactNode;
+};
 
 /**
  * Reusable Input component matching the architectural surface styling
@@ -8,7 +14,7 @@ export const Input = ({
   icon: Icon,
   error,
   ...props
-}) => {
+}: InputProps) => {
   return (
     <div className="relative w-full">
       {Icon && (

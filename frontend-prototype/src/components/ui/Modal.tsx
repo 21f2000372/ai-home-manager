@@ -1,6 +1,15 @@
 import React, { useEffect } from 'react';
 import { X } from 'lucide-react';
 
+type ModalProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: React.ReactNode;
+  subtitle?: React.ReactNode;
+  children: React.ReactNode;
+  maxWidth?: string;
+};
+
 /**
  * Reusable minimal Modal dialog
  */
@@ -11,7 +20,7 @@ export const Modal = ({
   subtitle,
   children,
   maxWidth = 'max-w-md',
-}) => {
+}: ModalProps) => {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') onClose();

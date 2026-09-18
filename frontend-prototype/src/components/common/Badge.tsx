@@ -1,6 +1,13 @@
 import React from 'react';
 
-export const Badge = ({ children, variant = 'default', size = 'md', className = '' }) => {
+type BadgeProps = {
+  children: React.ReactNode;
+  variant?: string;
+  size?: string;
+  className?: string;
+};
+
+export const Badge = ({ children, variant = 'default', size = 'md', className = '' }: BadgeProps) => {
   const variantStyles = {
     default: 'bg-slate-800 text-slate-300 border-slate-700',
     brand: 'bg-brand-500/15 text-brand-300 border-brand-500/30',

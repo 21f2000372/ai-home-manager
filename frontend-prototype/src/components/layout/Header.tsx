@@ -131,7 +131,7 @@ export const Header = ({ onOpenMobileDrawer }) => {
                 {activeUser.name.split(' ')[0]}
               </span>
               {!activeUser.permissions.canViewFinances && (
-                <Lock className="w-2.5 h-2.5 text-[#B96359]" title="Financial view restricted" />
+                <Lock className="w-2.5 h-2.5 text-[#B96359]" aria-label="Financial view restricted" />
               )}
               <ChevronDown className="w-3 h-3 text-[#676B68] dark:text-[#969D96]" />
             </button>
