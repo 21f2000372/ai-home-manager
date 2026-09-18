@@ -6,6 +6,7 @@ import { Badge, type BadgeTone } from '@/components/design-system/badge';
 import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
 import { agentSteps, documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
+import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
 
 type WorkspaceKind = 'people' | 'tasks' | 'calendar' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat';
 
@@ -42,7 +43,7 @@ export function DomainWorkspace({ kind }: { kind: WorkspaceKind }) {
 function renderWorkspace(kind: WorkspaceKind) {
   switch (kind) {
     case 'people': return <PeopleWorkspace />;
-    case 'tasks': return <TasksWorkspace />;
+    case 'tasks': return <TaskWorkspace />;
     case 'calendar': return <CalendarWorkspace />;
     case 'inventory': return <InventoryWorkspace showGrocery={false} />;
     case 'grocery': return <InventoryWorkspace showGrocery />;
