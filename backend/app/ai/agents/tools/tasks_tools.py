@@ -1,14 +1,45 @@
 """Tasks and calendar domain tools."""
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime
 
 from langchain_core.tools import tool
 
 from app.db.base import SessionLocal
-from app.models.enums import Priority, TaskStatus
+from app.models.enums import MembershipStatus, Priority, TaskStatus
+from app.models.people import Membership, User
 from app.models.tasks import CalendarEvent, Task
+from app.services.tasks import TaskService
 from typing import Optional
+
+_agent_user_id: ContextVar[str | None] = ContextVar("agent_user_id", default=None)
+
+
+def set_agent_user_id(user_id: str):
+    return _agent_user_id.set(user_id)
+
+
+def reset_agent_user_id(token) -> None:
+    _agent_user_id.reset(token)
+
+
+def _resolve_assignee(session, value: str) -> str | None:
+    if not value:
+        return None
+
+    assignee = (
+        session.query(User)
+        .join(Membership)
+        .filter(
+            Membership.status == MembershipStatus.ACTIVE,
+            (User.user_id == value) | (User.display_name.ilike(value)),
+        )
+        .first()
+    )
+    if not assignee:
+        raise ValueError(f"Active household member '{value}' was not found")
+    return assignee.user_id
 
 def _parse_datetime(value: str, field_name: str) -> datetime | None:
     if not value:
@@ -52,17 +83,16 @@ def create_task(
         except ValueError as exc:
             return str(exc)
 
-        task = Task(
+        assigned_to_id = _resolve_assignee(session, assigned_to)
+        task = TaskService.create_task(
+            session=session,
             title=title,
             description=description or None,
+            created_by_id=_agent_user_id.get() or "",
+            assigned_to_id=assigned_to_id,
             due_at=parsed_due_at,
-            assigned_to=assigned_to or None,
             priority=task_priority,
         )
-
-        session.add(task)
-        session.commit()
-        session.refresh(task)
 
         result = f"Created task '{title}' (id={task.task_id})."
 
@@ -70,7 +100,7 @@ def create_task(
             result += f" Due: {parsed_due_at.isoformat()}."
 
         if assigned_to:
-            result += f" Assigned to: {assigned_to}."
+            result += f" Assigned to: {assigned_to_id}."
 
         return result
 

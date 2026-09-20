@@ -151,6 +151,31 @@ def get_pending_members():
         session.close()
 
 
+@auth_bp.route("/members", methods=["GET"])
+@login_required
+def get_members():
+    """Return active household members for assignment selectors."""
+    session = SessionLocal()
+    try:
+        members = (
+            session.query(User)
+            .join(Membership)
+            .filter(Membership.status == MembershipStatus.ACTIVE)
+            .order_by(User.display_name.asc())
+            .all()
+        )
+        return jsonify([
+            {
+                "user_id": member.user_id,
+                "name": member.display_name,
+                "role": member.membership.role.value,
+            }
+            for member in members
+        ]), 200
+    finally:
+        session.close()
+
+
 @auth_bp.route("/members/<string:user_id>/approve", methods=["POST"])
 @require_role(HouseholdRole.ADMIN)
 def approve_member(user_id: str):

@@ -5,7 +5,8 @@ import { Card } from '@/components/design-system/card';
 import { Badge, type BadgeTone } from '@/components/design-system/badge';
 import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
-import { agentSteps, documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
+import { agentSteps, documents, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
+import { CalendarWorkspace } from '@/features/calendar-schedule/calendar-workspace';
 import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
 
 type WorkspaceKind = 'people' | 'tasks' | 'calendar' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat';
@@ -61,10 +62,6 @@ function PeopleWorkspace() {
 function TasksWorkspace() {
   const [showCompleted, setShowCompleted] = useState(false);
   return <div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><Card className="p-6"><SectionHeading title="Active household tasks" detail="Assigned across family members based on availability." action={<button className="text-xs font-semibold text-[#27736d]" onClick={() => setShowCompleted((value) => !value)}>{showCompleted ? 'Hide completed' : 'Show completed'}</button>} /><div className="mt-5 flex flex-wrap gap-2"><Badge tone="neutral">All owners</Badge><Badge tone="ready">On track</Badge><Badge tone="attention">Needs attention</Badge></div><div className="mt-5 space-y-3">{tasks.filter((task) => showCompleted || task.status !== 'verified').map((task) => <div key={task.id} className="flex items-start gap-3 rounded-xl border border-[var(--line)] p-4"><button aria-label={`Complete ${task.title}`} className="mt-0.5 grid size-5 place-items-center rounded-full border border-[var(--line)] text-transparent hover:border-[#27736d] hover:text-[#27736d]"><Check size={13} /></button><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-[var(--ink)]">{task.title}</p><p className="mt-1 text-xs muted">{task.owner} · {task.cadence}</p></div><Badge tone={task.priority === 'high' ? 'attention' : task.priority === 'low' ? 'ready' : 'planned'}>{task.priority}</Badge></div>)}</div></Card><Card className="p-6"><SectionHeading title="Task health" detail="This week's operating rhythm" /><div className="mt-7 space-y-7"><Progress label="On track" value={75} /><Progress label="Assigned" value={92} /><Progress label="Completed" value={61} /></div></Card></div>;
-}
-
-function CalendarWorkspace() {
-  return <div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><Card className="p-6"><SectionHeading title="Upcoming household timeline" detail="Chronological family events and planned operations." action={<Badge tone="verified">September 2026</Badge>} /><div className="mt-6 space-y-4">{events.map((event) => <div key={event.id} className="flex gap-4 rounded-xl bg-[var(--surface-muted)] p-4"><div className="mt-1 size-3 shrink-0 rounded-full bg-[#346b8e]" /><div><p className="text-sm font-semibold text-[var(--ink)]">{event.title}</p><p className="mt-1 text-xs font-semibold text-[#346b8e]">{event.date}</p><p className="mt-1 text-xs muted">{event.place}</p></div></div>)}</div></Card><Card className="p-6"><SectionHeading title="Schedule controls" detail="Choose the view that fits the moment." /><div className="mt-6 grid gap-2"><Button tone="neutral">Month view</Button><Button tone="neutral">List view</Button><Button tone="neutral">Resolve conflicts</Button></div></Card></div>;
 }
 
 function InventoryWorkspace({ showGrocery }: { showGrocery: boolean }) {

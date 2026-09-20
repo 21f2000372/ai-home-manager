@@ -10,11 +10,29 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-try:
-    # Optional: load a local .env if python-dotenv is installed.
-    from dotenv import load_dotenv
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
-    load_dotenv()
+
+def _load_local_env() -> None:
+    """Load simple local KEY=VALUE settings without requiring a package."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        if not _ENV_FILE.exists():
+            return
+        for raw_line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ[key.strip()] = value.strip().strip('"').strip("'")
+        return
+
+    load_dotenv(dotenv_path=_ENV_FILE, override=True)
+
+
+try:
+    _load_local_env()
 except Exception:  # pragma: no cover - dotenv is optional at import time
     pass
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 from flask import Blueprint, g, jsonify, request
 
 from app.ai.agents.graph import run_agent
+from app.ai.agents.tools.tasks_tools import reset_agent_user_id, set_agent_user_id
 from app.auth.decorators import login_required
 
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
@@ -23,13 +24,17 @@ def send_message():
     if not message:
         return jsonify({"error": "message is required"}), 400
 
-    result = run_agent(
-        message=message,
-        session_id=session_id,
-        user_id=g.current_user.user_id,
-        role=g.current_role.value,
-        conversation_id=conversation_id,
-    )
+    user_token = set_agent_user_id(g.current_user.user_id)
+    try:
+        result = run_agent(
+            message=message,
+            session_id=session_id,
+            user_id=g.current_user.user_id,
+            role=g.current_role.value,
+            conversation_id=conversation_id,
+        )
+    finally:
+        reset_agent_user_id(user_token)
 
     
     body = {
