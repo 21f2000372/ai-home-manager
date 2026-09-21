@@ -48,7 +48,7 @@ def add_grocery_item(
 
 @tool
 def list_grocery_items(
-    purchased: bool | None = None,
+    purchased: Optional[bool] = None,
 ) -> str:
     """List grocery items, optionally filtering by purchased status."""
     session = SessionLocal()
@@ -118,9 +118,9 @@ def get_grocery_item(
 def update_grocery_item(
     grocery_item_id: str,
     name: Optional[str] = None,
-    quantity: float | None = None,
+    quantity: Optional[float] = None,
     unit: Optional[str] = None,
-    purchased: bool | None = None,
+    purchased: Optional[bool] = None,
 ) -> str:
     """Update an existing grocery item by its stable database id."""
     session = SessionLocal()
@@ -238,7 +238,7 @@ def add_inventory_item(
     name: str,
     quantity: float = 1,
     unit: str = "",
-    low_stock_threshold: float | None = None,
+    low_stock_threshold: Optional[float] = None,
 ) -> str:
     """Add an item to household inventory."""
     session = SessionLocal()
@@ -353,9 +353,9 @@ def get_inventory_item(
 def update_inventory_item(
     item_id: str,
     name: Optional[str] = None,
-    quantity: float | None = None,
+    quantity: Optional[float] = None,
     unit: Optional[str] = None,
-    low_stock_threshold: float | None = None,
+    low_stock_threshold: Optional[float] = None,
 ) -> str:
     """Update an existing inventory item by its stable database id."""
     session = SessionLocal()
