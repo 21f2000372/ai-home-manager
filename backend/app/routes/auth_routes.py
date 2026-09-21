@@ -14,6 +14,28 @@ from app.services.people import PeopleService
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 
+def _member_payload(user: User) -> dict:
+    """Safe member projection for Admin-only people-management screens."""
+    membership = user.membership
+    return {
+        "user_id": user.user_id,
+        "name": user.display_name,
+        "email": user.email,
+        "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+        "relationship": user.relationship_label,
+        "role": membership.role.value if membership else None,
+        "status": membership.status.value if membership else None,
+    }
+
+
+def _parse_optional_date(value: object) -> date | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError("date_of_birth must be an ISO date")
+    return date.fromisoformat(value)
+
+
 @auth_bp.route("/register-household", methods=["POST"])
 def register_household():
     """US-1.1: Register initial user as Admin."""
@@ -26,7 +48,10 @@ def register_household():
     if not email or not password or not display_name:
         return jsonify({"error": "email, password, and display_name are required"}), 400
 
-    dob = date.fromisoformat(dob_str) if dob_str else None
+    try:
+        dob = _parse_optional_date(dob_str)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     session = SessionLocal()
     try:
@@ -40,6 +65,7 @@ def register_household():
             "user": {
                 "id": user.user_id,
                 "email": user.email,
+                "name": user.display_name,
                 "role": user.membership.role.value,
             },
         }), 201
@@ -62,9 +88,7 @@ def login():
     session = SessionLocal()
     try:
         user = PeopleService.authenticate(session, email, password)
-        print(user)
         if not user or not user.membership:
-            # print(user.membership)
             return jsonify({"error": "Invalid email or password"}), 401
 
         if user.membership.status != MembershipStatus.ACTIVE:
@@ -109,7 +133,10 @@ def join_household():
     if not all([invite_code, email, password, display_name]):
         return jsonify({"error": "Missing required fields"}), 400
 
-    dob = date.fromisoformat(dob_str) if dob_str else None
+    try:
+        dob = _parse_optional_date(dob_str)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     session = SessionLocal()
     try:
@@ -119,6 +146,7 @@ def join_household():
         return jsonify({
             "message": "Registration successful. Awaiting Admin approval.",
             "user_id": user.user_id,
+            "status": MembershipStatus.PENDING.value,
         }), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -139,14 +167,20 @@ def get_pending_members():
             .all()
         )
         return jsonify([
-            {
-                "user_id": u.user_id,
-                "name": u.display_name,
-                "email": u.email,
-                "date_of_birth": u.date_of_birth.isoformat() if u.date_of_birth else None,
-            }
+            _member_payload(u)
             for u in pending
         ]), 200
+    finally:
+        session.close()
+
+
+@auth_bp.route("/members", methods=["GET"])
+@require_role(HouseholdRole.ADMIN)
+def get_active_members():
+    """Admin roster used for role management and Admin transfer."""
+    session = SessionLocal()
+    try:
+        return jsonify([_member_payload(member) for member in PeopleService.list_active_members(session)]), 200
     finally:
         session.close()
 
@@ -167,6 +201,20 @@ def approve_member(user_id: str):
     try:
         PeopleService.approve_member(session, user_id, role)
         return jsonify({"message": f"User approved as {role.value}"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@auth_bp.route("/members/<string:user_id>/reject", methods=["POST"])
+@require_role(HouseholdRole.ADMIN)
+def reject_member(user_id: str):
+    """Reject a pending membership request."""
+    session = SessionLocal()
+    try:
+        PeopleService.reject_member(session, user_id)
+        return jsonify({"message": "Membership request rejected"}), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     finally:
@@ -209,6 +257,40 @@ def transfer_admin():
     try:
         PeopleService.transfer_admin(session, g.current_user.user_id, successor_id)
         return jsonify({"message": "Admin privileges transferred successfully"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@auth_bp.route("/invites", methods=["GET"])
+@require_role(HouseholdRole.ADMIN)
+def get_invites():
+    """List invite lifecycle metadata without exposing hashed codes."""
+    session = SessionLocal()
+    try:
+        invites = PeopleService.list_invites(session)
+        return jsonify([
+            {
+                "invite_id": invite.invite_id,
+                "status": invite.status.value,
+                "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+                "created_at": invite.created_at.isoformat(),
+            }
+            for invite in invites
+        ]), 200
+    finally:
+        session.close()
+
+
+@auth_bp.route("/invites/<string:invite_id>/revoke", methods=["POST"])
+@require_role(HouseholdRole.ADMIN)
+def revoke_invite(invite_id: str):
+    """Invalidate an active invite before its expiry."""
+    session = SessionLocal()
+    try:
+        PeopleService.revoke_invite(session, invite_id)
+        return jsonify({"message": "Invite revoked"}), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     finally:

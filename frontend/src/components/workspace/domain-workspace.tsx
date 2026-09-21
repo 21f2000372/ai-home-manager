@@ -6,6 +6,7 @@ import { Badge, type BadgeTone } from '@/components/design-system/badge';
 import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
 import { agentSteps, documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
+import { PeoplePermissionsWorkspace } from '@/features/people-permissions/people-permissions-workspace';
 import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
 
 type WorkspaceKind = 'people' | 'tasks' | 'calendar' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat';
@@ -35,6 +36,8 @@ const actionLabels: Record<WorkspaceKind, string> = {
 };
 
 export function DomainWorkspace({ kind }: { kind: WorkspaceKind }) {
+  if (kind === 'people') return <PeoplePermissionsWorkspace />;
+  if (kind === 'tasks') return <TaskWorkspace />;
   const meta = pageMeta[kind];
   const Icon = meta.icon;
   return <section className="space-y-6"><div className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end"><div><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#ee7b4b]"><Icon size={14} />{meta.eyebrow}</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--ink)] sm:text-4xl">{kind === 'chat' ? 'AI assistant' : kind[0].toUpperCase() + kind.slice(1)}</h1><p className="mt-2 max-w-xl text-sm leading-6 muted">{meta.description}</p></div><Button><Plus size={16} />{actionLabels[kind]}</Button></div>{renderWorkspace(kind)}</section>;
