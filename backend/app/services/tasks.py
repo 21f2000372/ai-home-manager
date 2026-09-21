@@ -17,7 +17,7 @@ class TaskService:
     def create_task(
         session: Session,
         title: str,
-        created_by_id: str,
+        created_by_id: Optional[str],
         description: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
         due_at: Optional[datetime] = None,

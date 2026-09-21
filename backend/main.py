@@ -5,6 +5,7 @@ from flask import Flask
 from flask_cors import CORS
 
 from app.config import config
+from app.db.init_db import create_all
 from app.routes.auth_routes import auth_bp
 from app.routes.task_routes import task_bp
 from app.routes.agent_routes import agent_bp
@@ -13,6 +14,8 @@ from app.routes.agent_routes import agent_bp
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = config.SECRET_KEY
+
+    create_all()
 
     CORS(app)
 

@@ -12,6 +12,7 @@ values below are reasonable defaults, not a spec.
 """
 from __future__ import annotations
 
+from app.ai.agents.domain_mesh import allowed_tool_names_for_domain
 from app.models.enums import HouseholdRole
 
 ROLE_RANK: dict[HouseholdRole, int] = {
@@ -37,7 +38,9 @@ TOOL_DOMAINS: dict[str, str] = {
 
     # Tasks
     "get_task": "tasks",
+    "search_tasks": "tasks",
     "update_task": "tasks",
+    "update_task_by_search": "tasks",
     "delete_task": "tasks",
     "create_task":"tasks",
     "list_tasks":"tasks",
@@ -61,7 +64,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "update_issue": "maintenance",
     "delete_issue": "maintenance",
 
-    "log repair":"maintenance",
+    "log_repair": "maintenance",
     "list_repairs": "maintenance",
     "get_repair": "maintenance",
     "update_repair": "maintenance",
@@ -74,7 +77,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "delete_expense": "finance",
     "list_expenses":"finance",
 
-    "create_budgets":"finance",
+    "create_budget": "finance",
     "list_budgets": "finance",
     "get_budget": "finance",
     "update_budget": "finance",
@@ -92,6 +95,9 @@ TOOL_DOMAINS: dict[str, str] = {
     "get_document": "documents",
     "update_document": "documents",
     "delete_document": "documents",
+    "extract_bill_information": "documents",
+    "link_document_to_record": "documents",
+    "list_document_links": "documents",
 }
 # (domain, tool_name) -> minimum role. Anything NOT listed here defaults to
 # DEFAULT_MIN_ROLE (fail-closed: a new tool needs an explicit, reviewed entry
@@ -121,8 +127,10 @@ TOOL_PERMISSIONS: dict[tuple[str, str], HouseholdRole] = {
     ("tasks", "create_task"): HouseholdRole.CHILD, 
     ("tasks", "complete_task"): HouseholdRole.CHILD, 
     ("tasks", "list_tasks"): HouseholdRole.CHILD, 
+    ("tasks", "search_tasks"): HouseholdRole.CHILD,
     ("tasks", "get_task"): HouseholdRole.CHILD, 
     ("tasks", "update_task"): HouseholdRole.CHILD, 
+    ("tasks", "update_task_by_search"): HouseholdRole.CHILD,
     ("tasks", "delete_task"): HouseholdRole.CHILD,
     # Calendar events 
     ("tasks", "create_calendar_event"): HouseholdRole.CHILD, 
@@ -168,6 +176,9 @@ TOOL_PERMISSIONS: dict[tuple[str, str], HouseholdRole] = {
     ("documents", "get_document"): HouseholdRole.ADULT, 
     ("documents", "update_document"): HouseholdRole.ADULT, 
     ("documents", "delete_document"): HouseholdRole.ADULT,
+    ("documents", "extract_bill_information"): HouseholdRole.ADULT,
+    ("documents", "link_document_to_record"): HouseholdRole.ADULT,
+    ("documents", "list_document_links"): HouseholdRole.ADULT,
     
 }
 
@@ -202,8 +213,9 @@ def is_authorized(
         # Unknown tools fail closed.
         return False
 
-    if tool_domain != domain:
-        # Tool/domain mismatch fails closed.
+    if tool_domain != domain and tool_name not in allowed_tool_names_for_domain(domain):
+        # Tool/domain mismatch fails closed unless the mesh exposes an
+        # explicit public proxy for this routed domain.
         return False
 
     # 2. Validate the user's role.
@@ -213,10 +225,9 @@ def is_authorized(
         return False
 
     # 3. Check the minimum role for this domain/tool pair.
-    min_role = TOOL_PERMISSIONS.get(
-        (domain, tool_name),
-        DEFAULT_MIN_ROLE,
-    )
+    min_role = TOOL_PERMISSIONS.get((domain, tool_name))
+    if min_role is None:
+        min_role = TOOL_PERMISSIONS.get((tool_domain, tool_name), DEFAULT_MIN_ROLE)
 
     return ROLE_RANK[role] >= ROLE_RANK[min_role]
 

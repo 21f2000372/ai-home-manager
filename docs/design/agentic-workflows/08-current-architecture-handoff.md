@@ -3,9 +3,10 @@
 ## Overview
 
 The assistant is a multi-domain household management agent built on
-**LangGraph**, orchestrating a router → planner → specialist → authorize →
-execute pipeline per chat turn. It is exposed to the app via a single entry
-point, `run_agent()`, called from the `/api/agent/message` Flask route.
+**LangGraph**, using a federated domain-agent mesh over the existing
+retrieve → planner → specialist → authorize → execute pipeline. It is exposed
+to the app via a single entry point, `run_agent()`, called from the
+`/api/agent/message` Flask route.
 
 LLM calls go through `langchain_openai.ChatOpenAI`, pointed at OpenRouter
 via `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY`. Interaction history is
@@ -62,9 +63,9 @@ vector store for role-aware retrieval-augmented context in later turns.
 | Node | File | Responsibility |
 |---|---|---|
 | `retrieve` | `memory.py` | Loads the last 10 `AgentInteraction` rows for the current conversation/session as short-term context. |
-| `planner` | `planner.py` | Structured-output LLM call (`PlanModel`) that decomposes the user message into one or more independent `{domain, intent, description}` actions. Encodes pronoun-resolution rules ("make it a dozen", "remove them"), reminder/task rules, and inventory-vs-grocery disambiguation. |
-| `specialist` | `specialist.py` | Per-action ReAct agent. Binds only the current action's domain toolset, forces `parallel_tool_calls=False`, and returns either a final response or exactly one pending tool call. Withholds the tool-call `AIMessage` from `messages` until authorization succeeds, so a rejected call never pollutes conversation history. |
-| `authorize` | `authorize.py` / `permissions.py` | RBAC gate. Validates `(role, domain, tool)` against a 4-tier role hierarchy (`Guest < Child < Adult < Admin`), fail-closed for unknown tools or domain mismatches. |
+| `planner` | `planner.py` | API gateway layer. Uses deterministic fast paths and structured output to decompose the user message into independent actions, then annotates each action with `domain_agent`, `allowed_tools`, and `shared_services` from the mesh registry. |
+| `specialist` | `specialist.py` | Per-action domain agent. Builds a compact prompt from the current action and the mesh contract, binds only owned tools plus explicit public proxy tools, forces `parallel_tool_calls=False`, and returns either a final response or exactly one pending tool call. |
+| `authorize` | `authorize.py` / `permissions.py` | RBAC gate. Validates role, routed domain, and requested tool against the mesh and `TOOL_PERMISSIONS`. Same-domain tools and explicit public proxy tools are allowed; unknown tools fail closed. |
 | `execute` | `execute.py` | Invokes the tool via `ALL_TOOLS_BY_NAME`, captures the result (or failure) as a `ToolMessage`, and records it on the current `PlannedAction`. |
 | `next_action` | `actions.py` | Marks the current action `completed` / `unauthorized` / `failed`, advances `current_action_index`, and builds the final human-readable response once all actions are processed. |
 | `save` | `memory.py` | Persists the turn as a `Conversation` / `AgentInteraction` row (system of record). |
@@ -78,12 +79,13 @@ vector store for role-aware retrieval-augmented context in later turns.
 - **RAG**: `retrieved_context`
 - **Conversation**: `messages` (LangChain message list, `add_messages`-reduced)
 - **Planning**: `planned_actions`, `current_action_index`
+- **Mesh metadata per action**: `domain_agent`, `allowed_tools`, `shared_services`, `delegated_from`
 - **In-flight tool call**: `pending_tool_call`, `pending_ai_message`, `tool_result`
 - **Authorization**: `authorized`, `auth_error`
 - **Loop safety**: `iteration`, `max_iterations` (default 5)
 - **Output**: `finished`, `response`, `interaction_id`, `embedded`
 
-## Domains & Tools
+## Domains, Mesh, and Tools
 
 Registered in `tools/__init__.py`, one module per domain:
 
@@ -91,23 +93,42 @@ Registered in `tools/__init__.py`, one module per domain:
 - **tasks** — `create_task`, `complete_task`, calendar event CRUD
 - **food** — grocery list CRUD, `mark_purchased`, inventory CRUD
 - **maintenance** — appliance CRUD, issue CRUD, repair CRUD
-- **documents** — document metadata CRUD
+- **documents** — document metadata CRUD, bill extraction, document links
 - **general** — no tools; conversational only
+
+The federated mesh is registered in `domain_mesh.py`. Each `DomainAgentSpec`
+declares:
+
+- owned tools
+- public proxy tools from other domains
+- shared MCP-style services
+- allowed delegation targets
+- domain-specific prompt rules
+
+This prevents a flat tool graph. A finance action can use approved document
+proxies such as `extract_bill_information`, but it cannot call arbitrary
+document update/delete tools.
 
 ## Authorization Model (`permissions.py`)
 
 - `TOOL_DOMAINS`: tool name → owning domain (defense against a specialist calling a tool outside its routed domain)
 - `TOOL_PERMISSIONS`: `(domain, tool)` → minimum `HouseholdRole`; unlisted pairs fall back to `DEFAULT_MIN_ROLE = ADULT` (fail-closed)
+- `allowed_tool_names_for_domain(domain)`: mesh-derived list of owned and public proxy tools available to the routed domain
 - `DOMAIN_MIN_ROLE`: minimum role to *retrieve* embedded content from a domain, keyed by domain rather than by whichever role happened to trigger the original interaction (e.g. any Adult can retrieve finance history, not just the Admin who logged it)
 
-## Known Issue
+## Bill and Document Workflow
 
-`TOOL_DOMAINS` contains the key `"log repair"` (space) while every other
-reference — `TOOL_PERMISSIONS`, the specialist prompt, and the actual tool
-name — uses `"log_repair"` (underscore). Because `is_authorized()` looks up
-`TOOL_DOMAINS.get(tool_name)` first and fails closed on a miss, any genuine
-`log_repair` tool call is currently rejected as unauthorized regardless of
-role. Fix: change the key in `TOOL_DOMAINS` to `"log_repair"`.
+Document tools now support:
+
+- `extract_bill_information`: heuristic extraction from readable bill, receipt, invoice, or statement text
+- `link_document_to_record`: link a stored document to a finance, maintenance, food, or task record
+- `list_document_links`: inspect document-to-record links
+
+The agent must not claim OCR or binary upload occurred. If readable bill text
+is missing, it asks for the text or upload/OCR pipeline. Paid bills are logged
+through finance tools, then linked to the source document when IDs are known.
+
+Detailed flow: [Federated agent mesh](09-federated-agent-mesh.md).
 
 ## Notable Design Choices
 
@@ -124,11 +145,14 @@ role. Fix: change the key in `TOOL_DOMAINS` to `"log_repair"`.
 | LangGraph orchestration           | ✅                         |
 | Conversation retrieval            | ✅                         |
 | Planner / multi-intent routing    | ✅                         |
-| Specialist                        | ✅                         |
+| Federated domain mesh             | ✅                         |
+| Specialist domain agents          | ✅                         |
 | Sequential tool execution         | ✅                         |
 | Tool-call sanitization            | ✅                         |
 | Authorization                     | ✅                         |
 | CRUD tools                        | ✅                         |
+| Bill text extraction              | ✅ heuristic               |
+| Document-to-record links          | ✅                         |
 | Memory persistence                | ✅                         |
 | Embedding/retrieval               | ✅                         |
 | Bulk grocery handling             | 🔧 Being refined           |

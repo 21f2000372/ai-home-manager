@@ -20,6 +20,10 @@ class PlannedAction(TypedDict, total=False):
     """
 
     domain: str
+    domain_agent: str
+    allowed_tools: list[str]
+    shared_services: list[str]
+    delegated_from: Optional[str]
     intent: str
     description: str
 

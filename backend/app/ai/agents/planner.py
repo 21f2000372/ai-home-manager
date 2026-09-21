@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.ai.agents.llm import get_llm
+from app.ai.agents.domain_mesh import domain_names, get_domain_spec
 from app.ai.agents.state import AgentState
 
 
 class PlannedActionModel(BaseModel):
     domain: str = Field(
-        description="One of: finance, tasks, food, maintenance, general"
+        description=f"One of: {', '.join(domain_names())}"
     )
     intent: str = Field(
         description="Short description of the requested action"
@@ -30,8 +33,6 @@ Break the user's CURRENT request into independent actions.
 
 Available domains:
 
-Available domains:
-
 - finance:
   expenses, payments, advances already paid, budgets, bills, spending
 
@@ -46,7 +47,7 @@ Available domains:
 
 - documents:
   uploaded document metadata, receipts, bills, warranties,
-  document records
+  document records, and bill/receipt extraction
 
 - general:
   questions or requests that do not require a household action
@@ -122,6 +123,14 @@ Documents:
 
 21. Requests to create, view, update, or delete document metadata belong
     to the documents domain.
+
+22. Requests to extract information from a bill, receipt, invoice, or
+    utility statement belong to the documents domain, even when the
+    extracted facts include money.
+
+23. Requests to log a paid bill or paid receipt as household spending
+    belong to finance. If the request also asks to save or extract the
+    bill document, create separate documents and finance actions.
 Grocery examples:
 
 Previous context:
@@ -177,7 +186,66 @@ Return only the structured plan.
 """
 
 
+def detect_single_action(message: str) -> dict | None:
+    """Recognize clear one-action requests without spending a planner call."""
+    text = (message or "").strip()
+    lowered = text.lower()
+    if not text:
+        return None
+
+    verbs = re.findall(
+        r"\b(add|create|list|get|update|delete|remove|mark|log|report|schedule|set|remind|complete|show|find|record|extract|attach|link)\b",
+        lowered,
+    )
+    if any(token in lowered for token in (" and ", " then ", " plus ", "; ", "\n")) and len(verbs) > 1:
+        return None
+
+    patterns = (
+        ("food", r"\b(grocery|inventory|food|milk|bread|item)\b"),
+        ("finance", r"\b(expense|budget|payment|spend|advance|paid bill|bill paid)\b"),
+        ("tasks", r"\b(task|todo|chore|reminder|event)\b"),
+        ("maintenance", r"\b(appliance|issue|repair|leak|broken|maintenance)\b"),
+        ("documents", r"\b(document|receipt|warranty|bill|invoice|statement|extract|ocr)\b"),
+    )
+    if not re.match(r"^(add|create|list|get|update|delete|remove|mark|log|report|schedule|set|remind|complete|show|find|record|extract|attach|link)\b", lowered):
+        return None
+    for domain, object_pattern in patterns:
+        if re.search(object_pattern, lowered):
+            return {
+                "domain": domain,
+                "intent": "Perform the requested household action",
+                "description": text,
+            }
+    return None
+
+
+def _with_mesh_metadata(action: dict) -> dict:
+    domain = action.get("domain", "general")
+    if domain not in domain_names():
+        domain = "general"
+    spec = get_domain_spec(domain)
+    return {
+        **action,
+        "domain": domain,
+        "domain_agent": spec.name,
+        "allowed_tools": list(spec.exposed_tools),
+        "shared_services": list(spec.shared_services),
+        "delegated_from": None,
+    }
+
+
 def planner_node(state: AgentState) -> dict:
+    single_action = detect_single_action(state.get("message", ""))
+    if single_action is not None:
+        return {
+            "planned_actions": [_with_mesh_metadata({
+                **single_action,
+                "status": "pending",
+                "result": None,
+            })],
+            "current_action_index": 0,
+        }
+
     llm = get_llm(temperature=0.0)
 
     structured_llm = llm.with_structured_output(PlanModel)
@@ -204,13 +272,13 @@ CURRENT USER REQUEST:
     )
 
     actions = [
-        {
+        _with_mesh_metadata({
             "domain": action.domain,
             "intent": action.intent,
             "description": action.description,
             "status": "pending",
             "result": None,
-        }
+        })
         for action in result.actions
     ]
 

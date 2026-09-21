@@ -1,0 +1,913 @@
+AI Home Manager Tool Catalog
+Catalog version: tool-catalog-v1
+Purpose: embedding-ready RAG source for selecting household agent tools.
+Format: one plain-text record per tool with role, domain, purpose, selection rules, search keywords, and argument schema.
+
+---
+
+Tool: add_appliance
+Domain: maintenance
+Content type: tool
+Minimum role: Adult
+Purpose: Add a household appliance.
+Use when: the user intent matches add appliance in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: add appliance; Add a household appliance.
+Arguments:
+- name, type=string, required=true
+- brand, type=string, required=false, default=""
+- model, type=string, required=false, default=""
+- purchased_at, type=string, required=false, default=""
+- warranty_ends_at, type=string, required=false, default=""
+
+---
+
+Tool: add_grocery_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Add an item to the active grocery list.
+Use when: the user intent matches add grocery item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: add grocery item; Add an item to the active grocery list.
+Arguments:
+- name, type=string, required=true
+- quantity, type=number, required=false, default=1
+- unit, type=string, required=false, default=""
+
+---
+
+Tool: add_inventory_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Add an item to household inventory.
+Use when: the user intent matches add inventory item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: add inventory item; Add an item to household inventory.
+Arguments:
+- name, type=string, required=true
+- quantity, type=number, required=false, default=1
+- unit, type=string, required=false, default=""
+- low_stock_threshold, type=number | null, required=false, default=null
+
+---
+
+Tool: complete_task
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Mark a task as Done.
+Use when: the user intent matches complete task in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: complete task; Mark a task as Done.
+Arguments:
+- task_id, type=string, required=true
+
+---
+
+Tool: create_budget
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Create a spending budget.
+Use when: the user intent matches create budget in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: create budget; Create a spending budget.
+Arguments:
+- category, type=string, required=true
+- limit_minor, type=integer, required=true
+- currency, type=string, required=true
+- period, type=string, required=false, default="Monthly"
+- period_start, type=string, required=false, default=""
+- period_end, type=string, required=false, default=""
+
+---
+
+Tool: create_calendar_event
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Create a calendar event.
+Use when: the user intent matches create calendar event in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: create calendar event; Create a calendar event.
+Arguments:
+- title, type=string, required=true
+- starts_at, type=string, required=true
+- ends_at, type=string, required=true
+- owner_id, type=string, required=false, default=""
+- task_id, type=string, required=false, default=""
+
+---
+
+Tool: create_document
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: Create document metadata for a file already stored in object storage.
+Use when: the user intent matches create document in the documents domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: create document; Create document metadata for a file already stored in object storage.
+Arguments:
+- storage_key, type=string, required=true
+- document_type, type=string, required=false, default="Other"
+- original_filename, type=string, required=false, default=""
+- mime_type, type=string, required=false, default=""
+
+---
+
+Tool: create_recurring_bill
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Create a recurring bill.
+Use when: the user intent matches create recurring bill in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: create recurring bill; Create a recurring bill.
+Arguments:
+- payee, type=string, required=true
+- due_at, type=string, required=true
+- expected_amount_minor, type=integer | null, required=false, default=null
+- currency, type=string, required=false, default="USD"
+- category, type=string, required=false, default=""
+- recurrence, type=string, required=false, default="MONTHLY"
+
+---
+
+Tool: create_task
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Create a household task, optionally with a reminder.
+Use when: the user intent matches create task in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: create task; Create a household task, optionally with a reminder.
+Arguments:
+- title, type=string, required=true
+- description, type=string, required=false, default=""
+- due_at, type=string, required=false, default=""
+- assigned_to, type=string, required=false, default=""
+- priority, type=string, required=false, default="Normal"
+
+---
+
+Tool: delete_appliance
+Domain: maintenance
+Content type: tool
+Minimum role: Adult
+Purpose: Delete an appliance by id.
+Use when: the user intent matches delete appliance in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete appliance; Delete an appliance by id.
+Arguments:
+- appliance_id, type=string, required=true
+
+---
+
+Tool: delete_budget
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Delete a budget.
+Use when: the user intent matches delete budget in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete budget; Delete a budget.
+Arguments:
+- budget_id, type=string, required=true
+
+---
+
+Tool: delete_calendar_event
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Delete an existing calendar event.
+Use when: the user intent matches delete calendar event in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete calendar event; Delete an existing calendar event.
+Arguments:
+- event_id, type=string, required=true
+
+---
+
+Tool: delete_document
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: Delete document metadata.
+Use when: the user intent matches delete document in the documents domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete document; Delete document metadata.
+Arguments:
+- document_id, type=string, required=true
+
+---
+
+Tool: delete_expense
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Delete an expense.
+Use when: the user intent matches delete expense in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete expense; Delete an expense.
+Arguments:
+- expense_id, type=string, required=true
+
+---
+
+Tool: delete_grocery_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Delete a grocery item by its stable database id.
+Use when: the user intent matches delete grocery item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete grocery item; Delete a grocery item by its stable database id.
+Arguments:
+- grocery_item_id, type=string, required=true
+
+---
+
+Tool: delete_inventory_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Delete an inventory item by its stable database id.
+Use when: the user intent matches delete inventory item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete inventory item; Delete an inventory item by its stable database id.
+Arguments:
+- item_id, type=string, required=true
+
+---
+
+Tool: delete_issue
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: Delete a maintenance issue.
+Use when: the user intent matches delete issue in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete issue; Delete a maintenance issue.
+Arguments:
+- issue_id, type=string, required=true
+
+---
+
+Tool: extract_bill_information
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: Extract structured facts from readable bill, invoice, statement, or receipt text.
+Use when: the user asks to extract information from a bill/receipt/invoice, or a finance/document flow needs bill facts before logging an expense or recurring bill.
+Selection rules: choose this tool only when readable bill text is available; do not claim OCR or file upload happened; ask for bill text when unavailable.
+Search keywords: extract bill; parse invoice; receipt OCR; bill amount; due date; invoice number; payee; utility statement
+Arguments:
+- bill_text, type=string, required=true
+- document_id, type=string, required=false, default=""
+
+---
+
+Tool: search_tasks
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Search tasks by title, description, status, priority, due date, or id.
+Use when: the user refers to an existing task by name, description, due date, or partial details and the task id is not known.
+Selection rules: use before ID-based update/delete/complete when the referenced task is not clearly identified; return candidates rather than guessing.
+Search keywords: find task; search task; task title; task description; existing task; lookup reminder; lookup chore
+Arguments:
+- query, type=string, required=true
+- status, type=string, required=false, default=""
+- limit, type=integer, required=false, default=5
+
+---
+
+Tool: update_task_by_search
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Find one task by title, description, or details and update it when the match is unambiguous.
+Use when: the user asks to update an existing task but provides task information such as title or description instead of a stable task id.
+Selection rules: do not use if multiple tasks may match; if the tool reports ambiguity, ask the user to choose a task id or provide more details.
+Search keywords: update task by title; change task by description; edit existing task; reschedule task by name; change reminder priority; rename chore
+Arguments:
+- task_query, type=string, required=true
+- title, type=string | null, required=false, default=null
+- description, type=string | null, required=false, default=null
+- due_at, type=string | null, required=false, default=null
+- assigned_to, type=string | null, required=false, default=null
+- priority, type=string | null, required=false, default=null
+- status, type=string | null, required=false, default=null
+
+---
+
+Tool: link_document_to_record
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: Link a stored document to a finance, maintenance, food, or task record.
+Use when: the user asks to attach a bill/receipt/warranty/document to an existing domain record after both IDs are known.
+Selection rules: never invent document_id or linked_record_id; use only explicit IDs from tool results or user context.
+Search keywords: link document; attach receipt; attach bill; connect warranty; document relationship
+Arguments:
+- document_id, type=string, required=true
+- linked_domain, type=string, required=true
+- linked_record_id, type=string, required=true
+
+---
+
+Tool: list_document_links
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: List links between documents and domain records.
+Use when: the user asks what a bill/receipt/warranty is attached to, or wants document relationship records.
+Selection rules: provide document_id when the user asks about one document; otherwise list recent links.
+Search keywords: list document links; linked bills; attached receipts; document relationships
+Arguments:
+- document_id, type=string, required=false, default=""
+
+---
+
+Tool: delete_recurring_bill
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Delete a recurring bill.
+Use when: the user intent matches delete recurring bill in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete recurring bill; Delete a recurring bill.
+Arguments:
+- bill_id, type=string, required=true
+
+---
+
+Tool: delete_repair
+Domain: maintenance
+Content type: tool
+Minimum role: Adult
+Purpose: Delete a repair by id.
+Use when: the user intent matches delete repair in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete repair; Delete a repair by id.
+Arguments:
+- repair_id, type=string, required=true
+
+---
+
+Tool: delete_task
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Delete an existing task by stable task id.
+Use when: the user intent matches delete task in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: delete task; Delete an existing task by stable task id.
+Arguments:
+- task_id, type=string, required=true
+
+---
+
+Tool: get_appliance
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: Get one appliance by id.
+Use when: the user intent matches get appliance in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get appliance; Get one appliance by id.
+Arguments:
+- appliance_id, type=string, required=true
+
+---
+
+Tool: get_budget
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Get one budget by id.
+Use when: the user intent matches get budget in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get budget; Get one budget by id.
+Arguments:
+- budget_id, type=string, required=true
+
+---
+
+Tool: get_calendar_event
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Get one calendar event by stable event id.
+Use when: the user intent matches get calendar event in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get calendar event; Get one calendar event by stable event id.
+Arguments:
+- event_id, type=string, required=true
+
+---
+
+Tool: get_document
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: Get one document by id.
+Use when: the user intent matches get document in the documents domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get document; Get one document by id.
+Arguments:
+- document_id, type=string, required=true
+
+---
+
+Tool: get_expense
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Get one expense by id.
+Use when: the user intent matches get expense in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get expense; Get one expense by id.
+Arguments:
+- expense_id, type=string, required=true
+
+---
+
+Tool: get_grocery_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Get one grocery item by its stable database id.
+Use when: the user intent matches get grocery item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get grocery item; Get one grocery item by its stable database id.
+Arguments:
+- grocery_item_id, type=string, required=true
+
+---
+
+Tool: get_inventory_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Get one inventory item by its stable database id.
+Use when: the user intent matches get inventory item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get inventory item; Get one inventory item by its stable database id.
+Arguments:
+- item_id, type=string, required=true
+
+---
+
+Tool: get_issue
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: Get one maintenance issue by id.
+Use when: the user intent matches get issue in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get issue; Get one maintenance issue by id.
+Arguments:
+- issue_id, type=string, required=true
+
+---
+
+Tool: get_recurring_bill
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Get one recurring bill.
+Use when: the user intent matches get recurring bill in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get recurring bill; Get one recurring bill.
+Arguments:
+- bill_id, type=string, required=true
+
+---
+
+Tool: get_repair
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: Get one repair by id.
+Use when: the user intent matches get repair in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get repair; Get one repair by id.
+Arguments:
+- repair_id, type=string, required=true
+
+---
+
+Tool: get_task
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Get one task by stable task id.
+Use when: the user intent matches get task in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: get task; Get one task by stable task id.
+Arguments:
+- task_id, type=string, required=true
+
+---
+
+Tool: list_appliances
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: List household appliances.
+Use when: the user intent matches list appliances in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list appliances; List household appliances.
+Arguments: none.
+
+---
+
+Tool: list_budgets
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: List budgets.
+Use when: the user intent matches list budgets in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list budgets; List budgets.
+Arguments: none.
+
+---
+
+Tool: list_calendar_events
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: List recent calendar events.
+Use when: the user intent matches list calendar events in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list calendar events; List recent calendar events.
+Arguments: none.
+
+---
+
+Tool: list_documents
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: List stored document metadata.
+Use when: the user intent matches list documents in the documents domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list documents; List stored document metadata.
+Arguments: none.
+
+---
+
+Tool: list_expenses
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: List recent expenses.
+Use when: the user intent matches list expenses in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list expenses; List recent expenses.
+Arguments:
+- category, type=string, required=false, default=""
+
+---
+
+Tool: list_grocery_items
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: List grocery items, optionally filtering by purchased status.
+Use when: the user intent matches list grocery items in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list grocery items; List grocery items, optionally filtering by purchased status.
+Arguments:
+- purchased, type=boolean | null, required=false, default=null
+
+---
+
+Tool: list_inventory
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: List stocked inventory items, optionally only those at/below their low-stock threshold.
+Use when: the user intent matches list inventory in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list inventory; List stocked inventory items, optionally only those at/below their low-stock threshold.
+Arguments:
+- low_stock_only, type=boolean, required=false, default=false
+
+---
+
+Tool: list_issues
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: List maintenance issues.
+Use when: the user intent matches list issues in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list issues; List maintenance issues.
+Arguments:
+- status, type=string, required=false, default=""
+
+---
+
+Tool: list_recurring_bills
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: List recurring bills.
+Use when: the user intent matches list recurring bills in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list recurring bills; List recurring bills.
+Arguments: none.
+
+---
+
+Tool: list_repairs
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: List repair history.
+Use when: the user intent matches list repairs in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list repairs; List repair history.
+Arguments: none.
+
+---
+
+Tool: list_tasks
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: List tasks, optionally filtered by status.
+Use when: the user intent matches list tasks in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: list tasks; List tasks, optionally filtered by status.
+Arguments:
+- status, type=string, required=false, default=""
+
+---
+
+Tool: log_expense
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Record a household expense. Money uses integer minor units.
+Use when: the user intent matches log expense in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: log expense; Record a household expense. Money uses integer minor units.
+Arguments:
+- amount_minor, type=integer, required=true
+- currency, type=string, required=true
+- category, type=string, required=true
+- description, type=string, required=false, default=""
+- occurred_at, type=string, required=false, default=""
+- document_id, type=string, required=false, default=""
+
+---
+
+Tool: log_repair
+Domain: maintenance
+Content type: tool
+Minimum role: Adult
+Purpose: Record a repair.
+Use when: the user intent matches log repair in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: log repair; Record a repair.
+Arguments:
+- appliance_id, type=string, required=false, default=""
+- serviced_at, type=string, required=false, default=""
+- provider, type=string, required=false, default=""
+- cost_minor, type=integer, required=false, default=0
+- currency, type=string, required=false, default="USD"
+- notes, type=string, required=false, default=""
+
+---
+
+Tool: mark_purchased
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Mark a grocery list item as purchased by its id.
+Use when: the user intent matches mark purchased in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: mark purchased; Mark a grocery list item as purchased by its id.
+Arguments:
+- grocery_item_id, type=string, required=true
+
+---
+
+Tool: report_issue
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: Report a maintenance issue.
+Use when: the user intent matches report issue in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: report issue; Report a maintenance issue.
+Arguments:
+- description, type=string, required=true
+- appliance_id, type=string, required=false, default=""
+- priority, type=string, required=false, default="Normal"
+
+---
+
+Tool: update_appliance
+Domain: maintenance
+Content type: tool
+Minimum role: Adult
+Purpose: Update an existing appliance.
+Use when: the user intent matches update appliance in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update appliance; Update an existing appliance.
+Arguments:
+- appliance_id, type=string, required=true
+- name, type=string | null, required=false, default=null
+- brand, type=string | null, required=false, default=null
+- model, type=string | null, required=false, default=null
+- purchased_at, type=string | null, required=false, default=null
+- warranty_ends_at, type=string | null, required=false, default=null
+
+---
+
+Tool: update_budget
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Update an existing budget.
+Use when: the user intent matches update budget in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update budget; Update an existing budget.
+Arguments:
+- budget_id, type=string, required=true
+- category, type=string | null, required=false, default=null
+- limit_minor, type=integer | null, required=false, default=null
+- currency, type=string | null, required=false, default=null
+- period, type=string | null, required=false, default=null
+- period_start, type=string | null, required=false, default=null
+- period_end, type=string | null, required=false, default=null
+
+---
+
+Tool: update_calendar_event
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Update an existing calendar event.
+Use when: the user intent matches update calendar event in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update calendar event; Update an existing calendar event.
+Arguments:
+- event_id, type=string, required=true
+- title, type=string | null, required=false, default=null
+- starts_at, type=string | null, required=false, default=null
+- ends_at, type=string | null, required=false, default=null
+- owner_id, type=string | null, required=false, default=null
+- task_id, type=string | null, required=false, default=null
+
+---
+
+Tool: update_document
+Domain: documents
+Content type: tool
+Minimum role: Adult
+Purpose: Update document metadata.
+Use when: the user intent matches update document in the documents domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update document; Update document metadata.
+Arguments:
+- document_id, type=string, required=true
+- storage_key, type=string | null, required=false, default=null
+- document_type, type=string | null, required=false, default=null
+- original_filename, type=string | null, required=false, default=null
+- mime_type, type=string | null, required=false, default=null
+
+---
+
+Tool: update_expense
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Update an existing expense.
+Use when: the user intent matches update expense in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update expense; Update an existing expense.
+Arguments:
+- expense_id, type=string, required=true
+- amount_minor, type=integer | null, required=false, default=null
+- currency, type=string | null, required=false, default=null
+- category, type=string | null, required=false, default=null
+- description, type=string | null, required=false, default=null
+- occurred_at, type=string | null, required=false, default=null
+- document_id, type=string | null, required=false, default=null
+
+---
+
+Tool: update_grocery_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Update an existing grocery item by its stable database id.
+Use when: the user intent matches update grocery item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update grocery item; Update an existing grocery item by its stable database id.
+Arguments:
+- grocery_item_id, type=string, required=true
+- name, type=string | null, required=false, default=null
+- quantity, type=number | null, required=false, default=null
+- unit, type=string | null, required=false, default=null
+- purchased, type=boolean | null, required=false, default=null
+
+---
+
+Tool: update_inventory_item
+Domain: food
+Content type: tool
+Minimum role: Child
+Purpose: Update an existing inventory item by its stable database id.
+Use when: the user intent matches update inventory item in the food domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update inventory item; Update an existing inventory item by its stable database id.
+Arguments:
+- item_id, type=string, required=true
+- name, type=string | null, required=false, default=null
+- quantity, type=number | null, required=false, default=null
+- unit, type=string | null, required=false, default=null
+- low_stock_threshold, type=number | null, required=false, default=null
+
+---
+
+Tool: update_issue
+Domain: maintenance
+Content type: tool
+Minimum role: Child
+Purpose: Update an existing maintenance issue.
+Use when: the user intent matches update issue in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update issue; Update an existing maintenance issue.
+Arguments:
+- issue_id, type=string, required=true
+- description, type=string | null, required=false, default=null
+- status, type=string | null, required=false, default=null
+- priority, type=string | null, required=false, default=null
+- appliance_id, type=string | null, required=false, default=null
+
+---
+
+Tool: update_recurring_bill
+Domain: finance
+Content type: tool
+Minimum role: Adult
+Purpose: Update a recurring bill.
+Use when: the user intent matches update recurring bill in the finance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update recurring bill; Update a recurring bill.
+Arguments:
+- bill_id, type=string, required=true
+- payee, type=string | null, required=false, default=null
+- due_at, type=string | null, required=false, default=null
+- expected_amount_minor, type=integer | null, required=false, default=null
+- currency, type=string | null, required=false, default=null
+- category, type=string | null, required=false, default=null
+- recurrence, type=string | null, required=false, default=null
+
+---
+
+Tool: update_repair
+Domain: maintenance
+Content type: tool
+Minimum role: Adult
+Purpose: Update an existing repair.
+Use when: the user intent matches update repair in the maintenance domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update repair; Update an existing repair.
+Arguments:
+- repair_id, type=string, required=true
+- appliance_id, type=string | null, required=false, default=null
+- serviced_at, type=string | null, required=false, default=null
+- provider, type=string | null, required=false, default=null
+- cost_minor, type=integer | null, required=false, default=null
+- currency, type=string | null, required=false, default=null
+- notes, type=string | null, required=false, default=null
+
+---
+
+Tool: update_task
+Domain: tasks
+Content type: tool
+Minimum role: Child
+Purpose: Update an existing task by stable task id.
+Use when: the user intent matches update task in the tasks domain.
+Selection rules: choose this exact tool only for its stated purpose; do not invent IDs or missing values; ask a concise clarification when required arguments are unknown.
+Search keywords: update task; Update an existing task by stable task id.
+Arguments:
+- task_id, type=string, required=true
+- title, type=string | null, required=false, default=null
+- description, type=string | null, required=false, default=null
+- due_at, type=string | null, required=false, default=null
+- assigned_to, type=string | null, required=false, default=null
+- priority, type=string | null, required=false, default=null
+- status, type=string | null, required=false, default=null

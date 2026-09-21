@@ -6,6 +6,7 @@ from datetime import datetime
 
 from langchain_core.tools import tool
 
+from app.ai.agents.entity_resolution import find_entity_matches, is_ambiguous_match
 from app.db.base import SessionLocal
 from app.models.enums import MembershipStatus, Priority, TaskStatus
 from app.models.people import Membership, User
@@ -37,6 +38,89 @@ def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
             f"Invalid {field_name} '{value}'. "
             "Use an ISO datetime such as 2026-09-19T08:00:00."
         )
+
+
+def _task_search_fields(task: Task) -> list[str]:
+    return [
+        task.title or "",
+        task.description or "",
+        task.status.value if task.status else "",
+        task.priority.value if task.priority else "",
+        task.due_at.isoformat() if task.due_at else "",
+        task.task_id or "",
+    ]
+
+
+def _format_task_candidate(match) -> str:
+    task = match.entity
+    parts = [
+        f"id={task.task_id}",
+        f"score={match.score:.2f}",
+        f"status={task.status.value}",
+        f"priority={task.priority.value}",
+    ]
+    if task.due_at:
+        parts.append(f"due={task.due_at.isoformat()}")
+    if task.description:
+        parts.append(f"description={task.description[:80]}")
+    return f"- {task.title} ({', '.join(parts)})"
+
+
+def _apply_task_updates(
+    task: Task,
+    *,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    due_at: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    priority: Optional[str] = None,
+    status: Optional[str] = None,
+) -> str | list[str]:
+    changed = []
+
+    if title is not None:
+        task.title = title
+        changed.append(f"title='{title}'")
+
+    if description is not None:
+        task.description = description or None
+        changed.append("description updated")
+
+    if due_at is not None:
+        try:
+            task.due_at = _parse_datetime(due_at, "due_at")
+        except ValueError as exc:
+            return str(exc)
+
+        changed.append(f"due_at={due_at}")
+
+    if assigned_to is not None:
+        task.assigned_to = assigned_to or None
+        changed.append("assigned_to updated")
+
+    if priority is not None:
+        try:
+            task.priority = Priority(priority)
+        except ValueError:
+            return (
+                f"Invalid priority '{priority}'. "
+                "Use Low, Normal, or High."
+            )
+
+        changed.append(f"priority={priority}")
+
+    if status is not None:
+        try:
+            task.status = TaskStatus(status)
+        except ValueError:
+            return (
+                f"Invalid status '{status}'. "
+                "Use Open, InProgress, Done, or Cancelled."
+            )
+
+        changed.append(f"status={status}")
+
+    return changed
 
 
 # ============================================================
@@ -73,7 +157,7 @@ def create_task(
             session=session,
             title=title,
             description=description or None,
-            created_by_id=_agent_user_id.get() or "",
+            created_by_id=_agent_user_id.get(),
             assigned_to_id=assigned_to_id,
             due_at=parsed_due_at,
             priority=task_priority,
@@ -152,6 +236,51 @@ def list_tasks(status: str = "") -> str:
 
 
 @tool
+def search_tasks(
+    query: str,
+    status: str = "",
+    limit: int = 5,
+) -> str:
+    """Search tasks by title, description, status, priority, due date, or id."""
+    session = SessionLocal()
+
+    try:
+        task_status = None
+        if status:
+            try:
+                task_status = TaskStatus(status)
+            except ValueError:
+                return (
+                    f"Invalid status '{status}'. "
+                    "Use Open, InProgress, Done, or Cancelled."
+                )
+
+        db_query = session.query(Task)
+        if task_status:
+            db_query = db_query.filter(Task.status == task_status)
+
+        rows = db_query.order_by(Task.created_at.desc()).limit(100).all()
+        matches = find_entity_matches(
+            rows=rows,
+            query=query,
+            id_getter=lambda task: task.task_id,
+            label_getter=lambda task: task.title,
+            field_getters=[
+                lambda task: " ".join(_task_search_fields(task)),
+            ],
+            limit=max(1, min(limit, 10)),
+        )
+
+        if not matches:
+            return f"No tasks matched '{query}'."
+
+        return "\n".join(_format_task_candidate(match) for match in matches)
+
+    finally:
+        session.close()
+
+
+@tool
 def get_task(task_id: str) -> str:
     """Get one task by stable task id."""
     session = SessionLocal()
@@ -204,51 +333,17 @@ def update_task(
         if not task:
             return f"No task found with id {task_id}."
 
-        changed = []
-
-        if title is not None:
-            task.title = title
-            changed.append(f"title='{title}'")
-
-        if description is not None:
-            task.description = description or None
-            changed.append("description updated")
-
-        if due_at is not None:
-            try:
-                task.due_at = _parse_datetime(due_at, "due_at")
-            except ValueError as exc:
-                return str(exc)
-
-            changed.append(f"due_at={due_at}")
-
-        
-
-        if assigned_to is not None:
-            task.assigned_to = assigned_to or None
-            changed.append("assigned_to updated")
-
-        if priority is not None:
-            try:
-                task.priority = Priority(priority)
-            except ValueError:
-                return (
-                    f"Invalid priority '{priority}'. "
-                    "Use Low, Normal, or High."
-                )
-
-            changed.append(f"priority={priority}")
-
-        if status is not None:
-            try:
-                task.status = TaskStatus(status)
-            except ValueError:
-                return (
-                    f"Invalid status '{status}'. "
-                    "Use Open, InProgress, Done, or Cancelled."
-                )
-
-            changed.append(f"status={status}")
+        changed = _apply_task_updates(
+            task,
+            title=title,
+            description=description,
+            due_at=due_at,
+            assigned_to=assigned_to,
+            priority=priority,
+            status=status,
+        )
+        if isinstance(changed, str):
+            return changed
 
         if not changed:
             return "No changes were provided."
@@ -264,6 +359,75 @@ def update_task(
     except Exception as exc:
         session.rollback()
         return f"Failed to update task: {exc}"
+
+    finally:
+        session.close()
+
+
+@tool
+def update_task_by_search(
+    task_query: str,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    due_at: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    priority: Optional[str] = None,
+    status: Optional[str] = None,
+) -> str:
+    """Find one task by title/description/details and update it when unambiguous."""
+    session = SessionLocal()
+
+    try:
+        rows = session.query(Task).order_by(Task.created_at.desc()).limit(100).all()
+        matches = find_entity_matches(
+            rows=rows,
+            query=task_query,
+            id_getter=lambda task: task.task_id,
+            label_getter=lambda task: task.title,
+            field_getters=[
+                lambda task: " ".join(_task_search_fields(task)),
+            ],
+            limit=5,
+        )
+
+        if not matches:
+            return f"No tasks matched '{task_query}'."
+
+        if is_ambiguous_match(matches):
+            return (
+                "Multiple tasks matched. No update was made. "
+                "Use the task id or a more specific description:\n"
+                + "\n".join(_format_task_candidate(match) for match in matches)
+            )
+
+        task = matches[0].entity
+        changed = _apply_task_updates(
+            task,
+            title=title,
+            description=description,
+            due_at=due_at,
+            assigned_to=assigned_to,
+            priority=priority,
+            status=status,
+        )
+        if isinstance(changed, str):
+            return changed
+
+        if not changed:
+            return "No changes were provided."
+
+        session.commit()
+
+        return (
+            f"Updated task '{task.title}' ({task.task_id}) "
+            f"matched by '{task_query}': "
+            + ", ".join(changed)
+            + "."
+        )
+
+    except Exception as exc:
+        session.rollback()
+        return f"Failed to update task by search: {exc}"
 
     finally:
         session.close()
@@ -520,8 +684,10 @@ def delete_calendar_event(event_id: str) -> str:
 TOOLS = [
     create_task,
     list_tasks,
+    search_tasks,
     get_task,
     update_task,
+    update_task_by_search,
     delete_task,
     complete_task,
     create_calendar_event,

@@ -18,7 +18,7 @@ from app.ai.agents.llm import get_llm
 from app.ai.agents.state import AgentState
 from app.models.enums import HouseholdRole
 
-DOMAINS = ["finance", "tasks", "food", "maintenance", "general"]
+DOMAINS = ["finance", "tasks", "food", "maintenance", "documents", "general"]
 
 _CLASSIFY_PROMPT = (
     "Classify the household assistant message into exactly one domain: "
@@ -39,6 +39,9 @@ _CLASSIFY_PROMPT = (
     "maintenance = appliances, repairs, maintenance, warranties, or "
     "reported household problems.\n"
 
+    "documents = uploaded/stored document metadata, receipts, bills, "
+    "warranties, document links, or extracting information from bills.\n"
+
     "general = anything else, including small talk or ambiguous requests.\n\n"
 
     "Important examples:\n"
@@ -52,6 +55,7 @@ _CLASSIFY_PROMPT = (
     "- 'Mark milk as purchased.' -> food\n"
     "- 'Create a task to clean the kitchen.' -> tasks\n"
     "- 'The washing machine is leaking.' -> maintenance\n\n"
+    "- 'Extract the amount and due date from this bill.' -> documents\n\n"
 
     "Reply with ONLY the domain word, nothing else."
 )

@@ -18,6 +18,7 @@ The image is a visual reference for a stateful router, tool agents, validation, 
 | [Home and maintenance](05-home-maintenance.md) | Property operations | Issues, repairs, warranties |
 | [Documents](06-documents.md) | Evidence and files | Upload, classification, linking |
 | [Conversation orchestrator](07-conversation-orchestrator.md) | Agent coordination | Intent, plans, bounded delegation |
+| [Federated agent mesh](09-federated-agent-mesh.md) | Backend AI runtime | Domain agents, shared tools, bill extraction |
 
 ## Non-negotiable agent rules
 
