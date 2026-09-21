@@ -5,8 +5,10 @@ import { Card } from '@/components/design-system/card';
 import { Badge, type BadgeTone } from '@/components/design-system/badge';
 import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
-import { agentSteps, documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
+import { documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
 import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
+import { sendAgentMessage, type PlannedAction } from '@/features/conversation/agent-api';
+import { ApiError } from '@/lib/api/request';
 
 type WorkspaceKind = 'people' | 'tasks' | 'calendar' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat';
 
@@ -84,8 +86,48 @@ function DocumentsWorkspace() {
   return <div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><Card className="p-6"><SectionHeading title="Verified household documents" detail="Governance rules and important records." action={<Badge tone="verified">Private</Badge>} /><div className="mt-6 space-y-3">{documents.map((document) => <div key={document.id} className="flex items-center gap-4 rounded-xl border border-[var(--line)] p-4"><div className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#e3edf8] text-[#346b8e]"><FileText size={18} /></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-[var(--ink)]">{document.title}</p><p className="mt-1 text-xs muted">{document.type} · {document.updated}</p></div><Badge tone={document.status as BadgeTone}>{document.status}</Badge></div>)}</div></Card><Card className="p-6"><SectionHeading title="Document actions" detail="Keep sensitive records current." /><div className="mt-6 space-y-3"><Button>Upload document</Button><Button tone="neutral">Review access</Button><div className="flex gap-3 rounded-xl bg-[#e1f1eb] p-4"><ShieldCheck className="shrink-0 text-[#27736d]" size={18} /><p className="text-xs leading-5 text-[#37615e]">AI agents can use verified summaries without exposing private source files.</p></div></div></Card></div>;
 }
 
+type ChatMessage = { id: string; sender: 'user' | 'assistant'; text: string };
+
 function ChatWorkspace() {
-  return <div className="grid gap-5 xl:grid-cols-[1fr_0.75fr]"><Card className="flex min-h-[480px] flex-col p-6"><SectionHeading title="Ask HomeOps Assistant" detail="Plans are visible and require confirmation before changes." action={<Badge tone="ready">Ready</Badge>} /><div className="mt-6 flex-1 space-y-4"><div className="max-w-xl rounded-2xl rounded-tl-sm bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink)]">Upcoming challenge detected: Mom travels until Friday, 4 guests arrive Saturday, Dad's low-salt constraint is verified, and Grandma's prescription is low.</div><div className="ml-auto max-w-xl rounded-2xl rounded-tr-sm bg-[#27736d] p-4 text-sm leading-6 text-white">Coordinate the weekend plan and prepare a grocery list for my confirmation.</div></div><div className="mt-6 flex gap-2"><input className="min-h-11 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--ink)] outline-none focus:border-[#27736d]" placeholder="Ask about your household..." aria-label="Ask the household assistant" /><Button aria-label="Send message"><MessageCircle size={16} /></Button></div></Card><Card className="p-6"><SectionHeading title="Agent reasoning" detail="Multi-agent state, bounded and reviewable." action={<Sparkles size={18} className="text-[#ee7b4b]" />} /><div className="mt-6 space-y-4">{agentSteps.map((step) => <div key={step.id} className="flex gap-3"><div className={`mt-1 grid size-6 shrink-0 place-items-center rounded-full ${step.status === 'complete' ? 'bg-[#e1f1eb] text-[#27736d]' : step.status === 'active' ? 'bg-[#fff0e9] text-[#c2603c]' : 'bg-[var(--surface-muted)] text-[var(--muted)]'}`}>{step.status === 'complete' ? <Check size={14} /> : step.status === 'active' ? <CircleAlert size={14} /> : <span className="size-1.5 rounded-full bg-current" />}</div><div><p className="text-sm font-semibold text-[var(--ink)]">{step.title}</p><p className="mt-1 text-xs leading-5 muted">{step.detail}</p></div></div>)}</div><Button className="mt-7 w-full">Review proposed plan</Button></Card></div>;
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [actions, setActions] = useState<PlannedAction[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || isSending) return;
+
+    const userMessage: ChatMessage = { id: crypto.randomUUID(), sender: 'user', text };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput('');
+    setIsSending(true);
+    setError(null);
+
+    try {
+      const result = await sendAgentMessage({ message: text, conversationId });
+      setConversationId(result.conversation_id);
+      setActions(result.planned_actions ?? []);
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), sender: 'assistant', text: result.response || 'No response.' },
+      ]);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.status === 401
+            ? 'Please sign in to use the assistant.'
+            : err.message
+          : 'The assistant is unavailable. Please try again.';
+      setError(message);
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  return <div className="grid gap-5 xl:grid-cols-[1fr_0.75fr]"><Card className="flex min-h-[480px] flex-col p-6"><SectionHeading title="Ask HomeOps Assistant" detail="Plans are visible and require confirmation before changes." action={<Badge tone={isSending ? 'attention' : 'ready'}>{isSending ? 'Thinking…' : 'Ready'}</Badge>} /><div className="mt-6 flex-1 space-y-4">{messages.length === 0 ? <div className="max-w-xl rounded-2xl rounded-tl-sm bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink)]">Ask me about your household — tasks, groceries, expenses, maintenance, and more. For example: “What tasks are assigned to me?”</div> : messages.map((message) => message.sender === 'user' ? <div key={message.id} className="ml-auto max-w-xl whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#27736d] p-4 text-sm leading-6 text-white">{message.text}</div> : <div key={message.id} className="max-w-xl whitespace-pre-wrap rounded-2xl rounded-tl-sm bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink)]">{message.text}</div>)}{isSending ? <div className="max-w-xl rounded-2xl rounded-tl-sm bg-[var(--surface-muted)] p-4 text-sm leading-6 muted">Thinking…</div> : null}{error ? <div className="max-w-xl rounded-2xl bg-[#fff0e9] p-4 text-sm leading-6 text-[#c2603c]">{error}</div> : null}</div><div className="mt-6 flex gap-2"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend(); } }} disabled={isSending} className="min-h-11 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--ink)] outline-none focus:border-[#27736d] disabled:opacity-60" placeholder="Ask about your household..." aria-label="Ask the household assistant" /><Button aria-label="Send message" onClick={() => void handleSend()} disabled={isSending}><MessageCircle size={16} /></Button></div></Card><Card className="p-6"><SectionHeading title="Agent reasoning" detail="Multi-agent state, bounded and reviewable." action={<Sparkles size={18} className="text-[#ee7b4b]" />} /><div className="mt-6 space-y-4">{actions.length === 0 ? <p className="text-sm leading-6 muted">Planned actions from the assistant will appear here after you send a message.</p> : actions.map((action, index) => <div key={index} className="flex gap-3"><div className={`mt-1 grid size-6 shrink-0 place-items-center rounded-full ${action.status === 'completed' ? 'bg-[#e1f1eb] text-[#27736d]' : action.status === 'unauthorized' || action.status === 'failed' ? 'bg-[#fff0e9] text-[#c2603c]' : 'bg-[var(--surface-muted)] text-[var(--muted)]'}`}>{action.status === 'completed' ? <Check size={14} /> : action.status === 'unauthorized' || action.status === 'failed' ? <CircleAlert size={14} /> : <span className="size-1.5 rounded-full bg-current" />}</div><div className="min-w-0"><p className="text-sm font-semibold text-[var(--ink)]">{action.intent || action.description}</p><p className="mt-1 text-xs leading-5 muted">{action.domain}{action.result ? ` · ${action.result}` : ''}</p></div></div>)}</div></Card></div>;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
