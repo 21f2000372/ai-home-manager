@@ -7,7 +7,8 @@ from typing import List, Optional, Tuple
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
-from app.models.enums import Priority, TaskStatus
+from app.models.enums import MembershipStatus, Priority, TaskStatus
+from app.models.people import Membership, User
 from app.models.tasks import CalendarEvent, Task
 
 
@@ -23,6 +24,19 @@ class TaskService:
         priority: Priority = Priority.NORMAL,
     ) -> Task:
         """Create a household task record (US-2.2)."""
+        if assigned_to_id:
+            assignee = (
+                session.query(User)
+                .join(Membership)
+                .filter(
+                    User.user_id == assigned_to_id,
+                    Membership.status == MembershipStatus.ACTIVE,
+                )
+                .first()
+            )
+            if not assignee:
+                raise ValueError("Assigned member was not found in the active household")
+
         task = Task(
             title=title.strip(),
             description=description.strip() if description else None,
@@ -61,6 +75,42 @@ class TaskService:
         if not task:
             raise ValueError("Task not found")
         task.status = status
+        session.commit()
+        return task
+
+    @staticmethod
+    def update_task(
+        session: Session,
+        task_id: str,
+        title: str,
+        description: Optional[str] = None,
+        assigned_to_id: Optional[str] = None,
+        due_at: Optional[datetime] = None,
+        priority: Priority = Priority.NORMAL,
+    ) -> Task:
+        """Update editable task fields while preserving its lifecycle status."""
+        task = session.query(Task).filter(Task.task_id == task_id).first()
+        if not task:
+            raise ValueError("Task not found")
+
+        if assigned_to_id:
+            assignee = (
+                session.query(User)
+                .join(Membership)
+                .filter(
+                    User.user_id == assigned_to_id,
+                    Membership.status == MembershipStatus.ACTIVE,
+                )
+                .first()
+            )
+            if not assignee:
+                raise ValueError("Assigned member was not found in the active household")
+
+        task.title = title.strip()
+        task.description = description.strip() if description else None
+        task.assigned_to = assigned_to_id
+        task.due_at = due_at
+        task.priority = priority
         session.commit()
         return task
 

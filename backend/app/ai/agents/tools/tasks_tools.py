@@ -1,13 +1,16 @@
 """Tasks and calendar domain tools."""
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime
 
 from langchain_core.tools import tool
 
 from app.db.base import SessionLocal
-from app.models.enums import Priority, TaskStatus
+from app.models.enums import MembershipStatus, Priority, TaskStatus
+from app.models.people import Membership, User
 from app.models.tasks import CalendarEvent, Task
+from app.services.tasks import TaskService
 from typing import Optional
 
 def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
@@ -52,17 +55,16 @@ def create_task(
         except ValueError as exc:
             return str(exc)
 
-        task = Task(
+        assigned_to_id = _resolve_assignee(session, assigned_to)
+        task = TaskService.create_task(
+            session=session,
             title=title,
             description=description or None,
+            created_by_id=_agent_user_id.get() or "",
+            assigned_to_id=assigned_to_id,
             due_at=parsed_due_at,
-            assigned_to=assigned_to or None,
             priority=task_priority,
         )
-
-        session.add(task)
-        session.commit()
-        session.refresh(task)
 
         result = f"Created task '{title}' (id={task.task_id})."
 
@@ -70,7 +72,7 @@ def create_task(
             result += f" Due: {parsed_due_at.isoformat()}."
 
         if assigned_to:
-            result += f" Assigned to: {assigned_to}."
+            result += f" Assigned to: {assigned_to_id}."
 
         return result
 
