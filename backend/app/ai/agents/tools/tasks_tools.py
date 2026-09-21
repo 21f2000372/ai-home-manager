@@ -13,6 +13,19 @@ from app.models.tasks import CalendarEvent, Task
 from app.services.tasks import TaskService
 from typing import Optional
 
+_agent_user_id: ContextVar[str] = ContextVar("agent_user_id", default="")
+
+
+def set_agent_user_id(user_id: str):
+    """Bind the current authenticated user for agent-created task data."""
+    return _agent_user_id.set(user_id)
+
+
+def reset_agent_user_id(token):
+    """Restore the previous agent user context after a request."""
+    _agent_user_id.reset(token)
+
+
 def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
     if not value:
         return None

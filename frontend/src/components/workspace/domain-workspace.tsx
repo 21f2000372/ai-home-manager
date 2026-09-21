@@ -7,6 +7,7 @@ import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
 import { documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
 import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
+import { CalendarWorkspace } from '@/features/calendar-schedule';
 import { sendAgentMessage, type PlannedAction } from '@/features/conversation/agent-api';
 import { ApiError } from '@/lib/api/request';
 
