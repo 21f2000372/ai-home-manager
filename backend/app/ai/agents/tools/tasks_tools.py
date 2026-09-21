@@ -13,35 +13,7 @@ from app.models.tasks import CalendarEvent, Task
 from app.services.tasks import TaskService
 from typing import Optional
 
-_agent_user_id: ContextVar[str | None] = ContextVar("agent_user_id", default=None)
-
-
-def set_agent_user_id(user_id: str):
-    return _agent_user_id.set(user_id)
-
-
-def reset_agent_user_id(token) -> None:
-    _agent_user_id.reset(token)
-
-
-def _resolve_assignee(session, value: str) -> str | None:
-    if not value:
-        return None
-
-    assignee = (
-        session.query(User)
-        .join(Membership)
-        .filter(
-            Membership.status == MembershipStatus.ACTIVE,
-            (User.user_id == value) | (User.display_name.ilike(value)),
-        )
-        .first()
-    )
-    if not assignee:
-        raise ValueError(f"Active household member '{value}' was not found")
-    return assignee.user_id
-
-def _parse_datetime(value: str, field_name: str) -> datetime | None:
+def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
     if not value:
         return None
 
