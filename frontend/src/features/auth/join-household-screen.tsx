@@ -3,7 +3,7 @@ import { ArrowRight, Home, LockKeyhole, Mail, UserRound } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError, request } from '@/lib/api/request';
 
-type JoinResponse = { message: string; status: 'Pending'; user_id: string };
+type JoinResponse = { message: string; user_id: string };
 
 export function JoinHouseholdScreen() {
   const [searchParams] = useSearchParams();

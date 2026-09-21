@@ -65,6 +65,7 @@ class PeopleService:
         """Verify user credentials and active membership status."""
         user = session.query(User).filter(User.email == email.lower()).first()
         if not user or not verify_password(password, user.password_hash):
+            print(user)
             return None
         
         return user
@@ -99,7 +100,7 @@ class PeopleService:
     ) -> User:
         """Join household via invite code in PENDING status (US-1.2)."""
         code_hash = cls._hash_code(invite_code)
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
 
         invite = (
             session.query(Invite)
@@ -109,10 +110,7 @@ class PeopleService:
         if not invite:
             raise ValueError("Invalid invite code")
 
-        expires_at = invite.expires_at
-        if expires_at and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at and expires_at < now:
+        if invite.expires_at and invite.expires_at < now:
             invite.status = InviteStatus.EXPIRED
             session.commit()
             raise ValueError("Invite code has expired")
@@ -133,9 +131,6 @@ class PeopleService:
             status=MembershipStatus.PENDING,
         )
 
-        # An invite represents one household application.  Consume it in the
-        # same transaction as the pending member record so it cannot be reused.
-        invite.status = InviteStatus.USED
         session.add(user)
         session.commit()
         return user
@@ -145,9 +140,6 @@ class PeopleService:
         cls, session: Session, target_user_id: str, role: HouseholdRole
     ) -> Membership:
         """Admin approves a pending member and assigns their role (US-1.3)."""
-        if role == HouseholdRole.ADMIN:
-            raise ValueError("Approve members as Adult, Child, or Guest. Use Admin transfer instead.")
-
         membership = (
             session.query(Membership)
             .filter(Membership.user_id == target_user_id)
@@ -163,55 +155,11 @@ class PeopleService:
         session.commit()
         return membership
 
-    @staticmethod
-    def reject_member(session: Session, target_user_id: str) -> Membership:
-        """Reject a pending application without deleting its audit trail."""
-        membership = session.query(Membership).filter(Membership.user_id == target_user_id).first()
-        if not membership:
-            raise ValueError("Membership record not found")
-        if membership.status != MembershipStatus.PENDING:
-            raise ValueError("Only pending members can be rejected")
-
-        membership.status = MembershipStatus.REJECTED
-        session.commit()
-        return membership
-
-    @staticmethod
-    def list_active_members(session: Session) -> list[User]:
-        """Return the active household roster for Admin member management."""
-        return (
-            session.query(User)
-            .join(Membership)
-            .filter(Membership.status == MembershipStatus.ACTIVE)
-            .order_by(User.display_name.asc())
-            .all()
-        )
-
-    @staticmethod
-    def list_invites(session: Session) -> list[Invite]:
-        """List invite metadata; raw invite codes are never stored or returned."""
-        return session.query(Invite).order_by(Invite.created_at.desc()).all()
-
-    @staticmethod
-    def revoke_invite(session: Session, invite_id: str) -> Invite:
-        invite = session.query(Invite).filter(Invite.invite_id == invite_id).first()
-        if not invite:
-            raise ValueError("Invite not found")
-        if invite.status != InviteStatus.ACTIVE:
-            raise ValueError("Only active invites can be revoked")
-
-        invite.status = InviteStatus.REVOKED
-        session.commit()
-        return invite
-
     @classmethod
     def change_member_role(
         cls, session: Session, target_user_id: str, new_role: HouseholdRole
     ) -> Membership:
         """Update a member's role with admin demotion guardrails (US-1.4)."""
-        if new_role == HouseholdRole.ADMIN:
-            raise ValueError("Use Admin transfer to assign the Admin role")
-
         membership = (
             session.query(Membership)
             .filter(Membership.user_id == target_user_id)
@@ -219,10 +167,19 @@ class PeopleService:
         )
         if not membership:
             raise ValueError("Membership not found")
-        if membership.status != MembershipStatus.ACTIVE:
-            raise ValueError("Only active members can have their role changed")
-        if membership.role == HouseholdRole.ADMIN:
-            raise ValueError("Use Admin transfer to change the current Admin's role")
+
+        # Guard: Cannot demote the last remaining admin
+        if membership.role == HouseholdRole.ADMIN and new_role != HouseholdRole.ADMIN:
+            admin_count = (
+                session.query(func.count(Membership.membership_id))
+                .filter(
+                    Membership.role == HouseholdRole.ADMIN,
+                    Membership.status == MembershipStatus.ACTIVE,
+                )
+                .scalar()
+            )
+            if admin_count <= 1:
+                raise ValueError("Cannot demote the sole household Admin.")
 
         membership.role = new_role
         session.commit()
@@ -244,8 +201,6 @@ class PeopleService:
             .first()
         )
 
-        if not current_admin or current_admin.role != HouseholdRole.ADMIN:
-            raise ValueError("Current Admin membership not found")
         if not successor or successor.status != MembershipStatus.ACTIVE:
             raise ValueError("Successor must be an active household member")
         if successor.role != HouseholdRole.ADULT:

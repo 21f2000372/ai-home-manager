@@ -72,6 +72,8 @@ def create_task():
             "title": task.title,
             "status": task.status.value,
         }), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     finally:
         session.close()
 
@@ -96,6 +98,50 @@ def update_task_status(task_id: str):
         return jsonify({"task_id": task.task_id, "status": task.status.value}), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
+    finally:
+        session.close()
+
+
+@task_bp.route("/tasks/<string:task_id>", methods=["PATCH"])
+@login_required
+def update_task(task_id: str):
+    """Update editable task details without changing its status."""
+    if g.current_role == HouseholdRole.GUEST:
+        return jsonify({"error": "Guest accounts have read-only access"}), 403
+
+    data = request.get_json() or {}
+    title = data.get("title")
+    if not title or not title.strip():
+        return jsonify({"error": "Title is required"}), 400
+
+    try:
+        due_at = datetime.fromisoformat(data["due_at"]) if data.get("due_at") else None
+        priority = Priority(data.get("priority", Priority.NORMAL.value))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Valid due_at and priority are required"}), 400
+
+    session = SessionLocal()
+    try:
+        task = TaskService.update_task(
+            session=session,
+            task_id=task_id,
+            title=title,
+            description=data.get("description"),
+            assigned_to_id=data.get("assigned_to"),
+            due_at=due_at,
+            priority=priority,
+        )
+        return jsonify({
+            "task_id": task.task_id,
+            "title": task.title,
+            "description": task.description,
+            "assigned_to": task.assigned_to,
+            "due_at": task.due_at.isoformat() if task.due_at else None,
+            "priority": task.priority.value,
+            "status": task.status.value,
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     finally:
         session.close()
 
