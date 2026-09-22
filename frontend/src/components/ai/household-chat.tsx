@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/design-system/button';
 import { Card } from '@/components/design-system/card';
 import { ApiError } from '@/lib/api/request';
-import { sendAgentMessage, type AgentMessageResponse } from '@/lib/api/agent';
+import { sendAgentMessage, type AgentMessageResponse } from '@/features/conversation/agent-api';
 
 type ChatMessage = {
   id: string;
@@ -52,7 +52,7 @@ export function HouseholdChat({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chatMutation = useMutation({
-    mutationFn: (message: string) => sendAgentMessage(message, undefined, conversationId),
+    mutationFn: (message: string) => sendAgentMessage({ message, conversationId }),
     onSuccess: (result: AgentMessageResponse, message: string) => {
       if (result.conversation_id) setConversationId(result.conversation_id);
       void onMessageProcessed?.(result);
