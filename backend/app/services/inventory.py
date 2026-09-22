@@ -69,6 +69,39 @@ class InventoryService:
         session.commit()
         return item
 
+    @staticmethod
+    def update_inventory_item(
+        session: Session,
+        item_id: str,
+        name: Optional[str] = None,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
+        low_stock_threshold: Optional[float] = None,
+    ) -> InventoryItem:
+        """Update inventory stock properties."""
+        item = session.query(InventoryItem).filter(InventoryItem.item_id == item_id).first()
+        if not item:
+            raise ValueError("Inventory item not found")
+        if name is not None:
+            item.name = name.strip()
+        if quantity is not None:
+            item.quantity = float(quantity)
+        if unit is not None:
+            item.unit = unit
+        if low_stock_threshold is not None:
+            item.low_stock_threshold = float(low_stock_threshold)
+        session.commit()
+        return item
+
+    @staticmethod
+    def delete_inventory_item(session: Session, item_id: str) -> None:
+        """Delete an item from household inventory stock."""
+        item = session.query(InventoryItem).filter(InventoryItem.item_id == item_id).first()
+        if not item:
+            raise ValueError("Inventory item not found")
+        session.delete(item)
+        session.commit()
+
     # -------------------------------------------------------------------------
     # Grocery List (US-3.4)
     # -------------------------------------------------------------------------
@@ -120,6 +153,36 @@ class InventoryService:
         session.commit()
         return item
 
+    @staticmethod
+    def update_grocery_item(
+        session: Session,
+        grocery_item_id: str,
+        name: Optional[str] = None,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
+    ) -> GroceryItem:
+        """Edit a grocery item's details."""
+        item = session.query(GroceryItem).filter(GroceryItem.grocery_item_id == grocery_item_id).first()
+        if not item:
+            raise ValueError("Grocery item not found")
+        if name is not None:
+            item.name = name.strip()
+        if quantity is not None:
+            item.quantity = float(quantity)
+        if unit is not None:
+            item.unit = unit
+        session.commit()
+        return item
+
+    @staticmethod
+    def delete_grocery_item(session: Session, grocery_item_id: str) -> None:
+        """Delete an item from the grocery list."""
+        item = session.query(GroceryItem).filter(GroceryItem.grocery_item_id == grocery_item_id).first()
+        if not item:
+            raise ValueError("Grocery item not found")
+        session.delete(item)
+        session.commit()
+
     # -------------------------------------------------------------------------
     # Recurring Daily Commodities & Occurrences (US-3.5, US-3.6)
     # -------------------------------------------------------------------------
@@ -158,7 +221,6 @@ class InventoryService:
         """Generate a purchase occurrence for a scheduled commodity date."""
         target = target_date or date.today()
         
-        # Prevent duplicate occurrences for the same day
         existing = (
             session.query(PurchaseOccurrence)
             .filter(
@@ -174,7 +236,6 @@ class InventoryService:
         if not rule:
             raise ValueError("Commodity rule not found")
 
-        # Find or link corresponding inventory item
         inv_item = session.query(InventoryItem).filter(InventoryItem.name.ilike(rule.name)).first()
 
         occurrence = PurchaseOccurrence(
@@ -186,6 +247,48 @@ class InventoryService:
         session.add(occurrence)
         session.commit()
         return occurrence
+
+    @staticmethod
+    def update_commodity_rule(
+        session: Session,
+        rule_id: str,
+        name: Optional[str] = None,
+        schedule: Optional[str] = None,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
+        preferred_brand: Optional[str] = None,
+        low_stock_threshold: Optional[float] = None,
+        active: Optional[bool] = None,
+    ) -> CommodityRule:
+        """Update recurring commodity parameters."""
+        rule = session.query(CommodityRule).filter(CommodityRule.rule_id == rule_id).first()
+        if not rule:
+            raise ValueError("Commodity rule not found")
+        if name is not None:
+            rule.name = name.strip()
+        if schedule is not None:
+            rule.schedule = schedule.strip()
+        if quantity is not None:
+            rule.quantity = float(quantity)
+        if unit is not None:
+            rule.unit = unit
+        if preferred_brand is not None:
+            rule.preferred_brand = preferred_brand
+        if low_stock_threshold is not None:
+            rule.low_stock_threshold = float(low_stock_threshold)
+        if active is not None:
+            rule.active = active
+        session.commit()
+        return rule
+
+    @staticmethod
+    def delete_commodity_rule(session: Session, rule_id: str) -> None:
+        """Delete a recurring commodity rule and cascade delete its occurrences."""
+        rule = session.query(CommodityRule).filter(CommodityRule.rule_id == rule_id).first()
+        if not rule:
+            raise ValueError("Commodity rule not found")
+        session.delete(rule)
+        session.commit()
 
     @classmethod
     def mark_occurrence_purchased(
