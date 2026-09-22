@@ -114,6 +114,16 @@ class TaskService:
         session.commit()
         return task
 
+    
+    @staticmethod
+    def delete_task(session: Session, task_id: str) -> None:
+        """Delete a task record."""
+        task = session.query(Task).filter(Task.task_id == task_id).first()
+        if not task:
+            raise ValueError("Task not found")
+        session.delete(task)
+        session.commit()
+
 
 class CalendarService:
     @staticmethod
@@ -174,3 +184,39 @@ class CalendarService:
         if range_end:
             query = query.filter(CalendarEvent.starts_at <= range_end)
         return query.order_by(CalendarEvent.starts_at.asc()).all()
+
+    @classmethod
+    def update_event(
+        cls,
+        session: Session,
+        event_id: str,
+        title: Optional[str] = None,
+        starts_at: Optional[datetime] = None,
+        ends_at: Optional[datetime] = None,
+    ) -> Tuple[CalendarEvent, List[CalendarEvent]]:
+        """Update an event and check for time-overlap conflicts against other events."""
+        event = session.query(CalendarEvent).filter(CalendarEvent.event_id == event_id).first()
+        if not event:
+            raise ValueError("Calendar event not found")
+        if title is not None:
+            event.title = title.strip()
+        if starts_at is not None:
+            event.starts_at = starts_at
+        if ends_at is not None:
+            event.ends_at = ends_at
+        if event.ends_at <= event.starts_at:
+            raise ValueError("Event end time must occur after start time")
+        conflicts = cls.check_conflicts(session, event.starts_at, event.ends_at, exclude_event_id=event.event_id)
+        session.commit()
+        return event, conflicts
+
+    @staticmethod
+    def delete_event(session: Session, event_id: str) -> None:
+        """Delete a shared calendar event."""
+        event = session.query(CalendarEvent).filter(CalendarEvent.event_id == event_id).first()
+        if not event:
+            raise ValueError("Calendar event not found")
+        session.delete(event)
+        session.commit()
+
+    

@@ -102,7 +102,7 @@ def update_task_status(task_id: str):
         session.close()
 
 
-@task_bp.route("/tasks/<string:task_id>", methods=["PATCH"])
+@task_bp.route("/tasks/<string:task_id>", methods=["PUT"])
 @login_required
 def update_task(task_id: str):
     """Update editable task details without changing its status."""
@@ -142,6 +142,22 @@ def update_task(task_id: str):
         }), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+@task_bp.route("/tasks/<string:task_id>", methods=["DELETE"])
+@login_required
+def delete_task(task_id: str):
+    """Delete a task. Blocked for Guest accounts."""
+    if g.current_role == HouseholdRole.GUEST:
+        return jsonify({"error": "Guest accounts have read-only access"}), 403
+
+    session = SessionLocal()
+    try:
+        TaskService.delete_task(session, task_id)
+        return jsonify({"message": "Task deleted successfully"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
     finally:
         session.close()
 
@@ -214,5 +230,66 @@ def create_calendar_event():
         }), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+@task_bp.route("/calendar/<string:event_id>", methods=["PUT"])
+@login_required
+def update_calendar_event(event_id: str):
+    """Edit an event with automatic conflict detection."""
+    if g.current_role == HouseholdRole.GUEST:
+        return jsonify({"error": "Guest accounts have read-only access"}), 403
+
+    data = request.get_json() or {}
+    starts_at = datetime.fromisoformat(data["starts_at"]) if data.get("starts_at") else None
+    ends_at = datetime.fromisoformat(data["ends_at"]) if data.get("ends_at") else None
+
+    session = SessionLocal()
+    try:
+        event, conflicts = CalendarService.update_event(
+            session=session,
+            event_id=event_id,
+            title=data.get("title"),
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
+        return jsonify({
+            "event": {
+                "event_id": event.event_id,
+                "title": event.title,
+                "starts_at": event.starts_at.isoformat(),
+                "ends_at": event.ends_at.isoformat(),
+            },
+            "conflicts": [
+                {
+                    "event_id": c.event_id,
+                    "title": c.title,
+                    "starts_at": c.starts_at.isoformat(),
+                    "ends_at": c.ends_at.isoformat(),
+                }
+                for c in conflicts
+            ],
+            "has_conflict": len(conflicts) > 0,
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+
+@task_bp.route("/calendar/<string:event_id>", methods=["DELETE"])
+@login_required
+def delete_calendar_event(event_id: str):
+    """Delete a calendar event. Blocked for Guest accounts."""
+    if g.current_role == HouseholdRole.GUEST:
+        return jsonify({"error": "Guest accounts have read-only access"}), 403
+
+    session = SessionLocal()
+    try:
+        CalendarService.delete_event(session, event_id)
+        return jsonify({"message": "Calendar event deleted successfully"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
     finally:
         session.close()
