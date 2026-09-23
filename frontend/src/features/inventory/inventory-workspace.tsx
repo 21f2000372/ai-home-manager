@@ -5,6 +5,7 @@ import { Badge } from '@/components/design-system/badge';
 import { Button } from '@/components/design-system/button';
 import { Card } from '@/components/design-system/card';
 import { SectionHeading } from '@/components/design-system/section-heading';
+import { HouseholdChat } from '@/components/ai/household-chat';
 import { ApiError } from '@/lib/api/request';
 import { useSessionStore } from '@/stores/session-store';
 import {
@@ -124,6 +125,17 @@ export function InventoryWorkspace() {
       {!canManageStock && <p className="rounded-xl bg-[#ECEAE4] px-4 py-3 text-sm muted">Your role can view household stock. An Adult or Admin can update stock levels.</p>}
       {errorMessage && <p role="alert" className="rounded-xl border border-[#B96359]/30 bg-[#B96359]/10 px-4 py-3 text-sm text-[#8B3F36]">{errorMessage}</p>}
       {isComposerOpen && <StockComposer form={stockForm} setForm={setStockForm} isEditing={Boolean(editingItem)} isSaving={isSaving} onSubmit={submitStock} />}
+      <HouseholdChat
+        title="Update stock by chat"
+        description="Try “Add 2 kg rice to inventory” or “What is low in stock?” The assistant uses the household agent and refreshes this page after it responds."
+        onMessageProcessed={async () => {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: inventoryKey }),
+            queryClient.invalidateQueries({ queryKey: lowStockKey }),
+            queryClient.invalidateQueries({ queryKey: groceryKey }),
+          ]);
+        }}
+      />
 
       <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
         <Card className="p-5 sm:p-6">
