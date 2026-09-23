@@ -7,6 +7,7 @@ import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
 import { documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
 import { PeoplePermissionsWorkspace } from '@/features/people-permissions/people-permissions-workspace';
+import { GroceryWorkspace, InventoryWorkspace } from '@/features/inventory/inventory-workspace';
 import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
 import { CalendarWorkspace } from '@/features/calendar-schedule';
 import { sendAgentMessage, type PlannedAction } from '@/features/conversation/agent-api';
@@ -40,6 +41,8 @@ const actionLabels: Record<WorkspaceKind, string> = {
 
 export function DomainWorkspace({ kind }: { kind: WorkspaceKind }) {
   if (kind === 'people') return <PeoplePermissionsWorkspace />;
+  if (kind === 'inventory') return <InventoryWorkspace />;
+  if (kind === 'grocery') return <GroceryWorkspace />;
   const meta = pageMeta[kind];
   const Icon = meta.icon;
   return <section className="space-y-6"><div className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end"><div><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#ee7b4b]"><Icon size={14} />{meta.eyebrow}</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--ink)] sm:text-4xl">{kind === 'chat' ? 'AI assistant' : kind[0].toUpperCase() + kind.slice(1)}</h1><p className="mt-2 max-w-xl text-sm leading-6 muted">{meta.description}</p></div><Button><Plus size={16} />{actionLabels[kind]}</Button></div>{renderWorkspace(kind)}</section>;
@@ -50,8 +53,8 @@ function renderWorkspace(kind: WorkspaceKind) {
     case 'people': return <PeopleWorkspace />;
     case 'tasks': return <TaskWorkspace />;
     case 'calendar': return <CalendarWorkspace />;
-    case 'inventory': return <InventoryWorkspace showGrocery={false} />;
-    case 'grocery': return <InventoryWorkspace showGrocery />;
+    case 'inventory': return <InventoryWorkspace />;
+    case 'grocery': return <GroceryWorkspace />;
     case 'finance': return <FinanceWorkspace />;
     case 'maintenance': return <MaintenanceWorkspace />;
     case 'documents': return <DocumentsWorkspace />;
@@ -68,7 +71,7 @@ function TasksWorkspace() {
   return <div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><Card className="p-6"><SectionHeading title="Active household tasks" detail="Assigned across family members based on availability." action={<button className="text-xs font-semibold text-[#27736d]" onClick={() => setShowCompleted((value) => !value)}>{showCompleted ? 'Hide completed' : 'Show completed'}</button>} /><div className="mt-5 flex flex-wrap gap-2"><Badge tone="neutral">All owners</Badge><Badge tone="ready">On track</Badge><Badge tone="attention">Needs attention</Badge></div><div className="mt-5 space-y-3">{tasks.filter((task) => showCompleted || task.status !== 'verified').map((task) => <div key={task.id} className="flex items-start gap-3 rounded-xl border border-[var(--line)] p-4"><button aria-label={`Complete ${task.title}`} className="mt-0.5 grid size-5 place-items-center rounded-full border border-[var(--line)] text-transparent hover:border-[#27736d] hover:text-[#27736d]"><Check size={13} /></button><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-[var(--ink)]">{task.title}</p><p className="mt-1 text-xs muted">{task.owner} · {task.cadence}</p></div><Badge tone={task.priority === 'high' ? 'attention' : task.priority === 'low' ? 'ready' : 'planned'}>{task.priority}</Badge></div>)}</div></Card><Card className="p-6"><SectionHeading title="Task health" detail="This week's operating rhythm" /><div className="mt-7 space-y-7"><Progress label="On track" value={75} /><Progress label="Assigned" value={92} /><Progress label="Completed" value={61} /></div></Card></div>;
 }
 
-function InventoryWorkspace({ showGrocery }: { showGrocery: boolean }) {
+function FixtureInventoryWorkspace({ showGrocery }: { showGrocery: boolean }) {
   const items = showGrocery ? inventoryAlerts : inventoryAlerts.slice(0, 3);
   return <div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><Card className="p-6"><SectionHeading title={showGrocery ? 'Next grocery run' : 'Pantry restock alerts'} detail={showGrocery ? 'Verified against household dietary and guest constraints.' : 'Items below their household threshold.'} action={<Badge tone="attention">{items.length} alerts</Badge>} /><div className="mt-6 space-y-3">{items.map((item) => <div key={item.id} className="flex items-center gap-4 rounded-xl border border-[var(--line)] p-4"><div className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#fff0e9] text-[#c2603c]"><Package size={18} /></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-[var(--ink)]">{item.title}</p><p className="mt-1 text-xs muted">{item.detail}</p></div><span className="text-xs font-semibold text-[#c2603c]">{item.quantity}</span></div>)}</div></Card><Card className="p-6"><SectionHeading title="Stock health" detail="Household thresholds" /><div className="mt-7 space-y-7"><Progress label="Fresh food" value={42} /><Progress label="Dry goods" value={76} /><Progress label="Medication" value={28} /></div></Card></div>;
 }
