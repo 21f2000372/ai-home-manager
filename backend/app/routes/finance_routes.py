@@ -1,7 +1,7 @@
 """REST routes for Finance, Expense Tracking, and Monthly Budgets."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from flask import Blueprint, g, jsonify, request
 
 from app.auth.decorators import login_required, require_role
@@ -15,16 +15,49 @@ finance_bp = Blueprint("finance", __name__, url_prefix="/api/finance")
 # -----------------------------------------------------------------------------
 # RBAC Enforcement Guard (US-4.4, US-1.6, US-1.7)
 # -----------------------------------------------------------------------------
+# app/routes/finance_routes.py
+
 @finance_bp.before_request
-@login_required
 def enforce_finance_privacy():
-    """Block Child and Guest roles before reaching any financial data."""
-    if g.current_role not in [HouseholdRole.ADMIN, HouseholdRole.ADULT]:
-        return jsonify({"error": "Forbidden: Financial records are restricted to Adult and Admin members"}), 403
+    """Allow CORS preflight OPTIONS requests, then enforce JWT and role checks."""
+    # 1. Skip preflight CORS checks so the browser receives 200 OK
+    if request.method == "OPTIONS":
+        return
+
+    # 2. Run authentication manually for other methods (GET, POST, PUT, DELETE)
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Missing or malformed Authorization header"}), 401
+
+    token = auth_header.split(" ", 1)[1].strip()
+    try:
+        from app.auth.jwt import decode_access_token
+        from app.models.people import User
+        from app.models.enums import MembershipStatus
+        payload = decode_access_token(token)
+    except Exception:
+        return jsonify({"error": "Invalid or expired token"}), 401
+
+    session = SessionLocal()
+    try:
+        user = session.query(User).filter(User.user_id == payload.get("sub")).first()
+        if not user or not user.membership:
+            return jsonify({"error": "User account or membership not found"}), 401
+        if user.membership.status != MembershipStatus.ACTIVE:
+            return jsonify({"error": "User membership is pending or suspended"}), 403
+
+        g.current_user = user
+        g.current_role = user.membership.role
+
+        # 3. RBAC check: Block Child and Guest from finance domain
+        if g.current_role not in [HouseholdRole.ADMIN, HouseholdRole.ADULT]:
+            return jsonify({"error": "Forbidden: Financial records are restricted to Adult and Admin members"}), 403
+    finally:
+        session.close()
 
 
 # -----------------------------------------------------------------------------
-# Expense Endpoints
+# Expense Endpoints (CRUD)
 # -----------------------------------------------------------------------------
 
 @finance_bp.route("/expenses", methods=["GET"])
@@ -40,11 +73,13 @@ def get_expenses():
         return jsonify([
             {
                 "expense_id": exp.expense_id,
-                "amount_cents": exp.amount_cents,
+                "amount_minor": exp.amount_minor,
+                "currency": exp.currency,
                 "category": exp.category,
                 "description": exp.description,
-                "payment_date": exp.payment_date.isoformat(),
-                "paid_by": exp.paid_by,
+                "occurred_at": exp.occurred_at.isoformat(),
+                "recorded_by": exp.recorded_by,
+                "document_id": exp.document_id,
             }
             for exp in expenses
         ]), 200
@@ -52,33 +87,66 @@ def get_expenses():
         session.close()
 
 
-@finance_bp.route("/expenses", methods=["POST"])
+@finance_bp.route("/expenses/<string:expense_id>", methods=["GET"])
+def get_single_expense(expense_id: str):
+    """Retrieve a single expense by ID."""
+    session = SessionLocal()
+    try:
+        expense = FinanceService.get_expense(session, expense_id)
+        if not expense:
+            return jsonify({"error": "Expense not found"}), 404
+        return jsonify({
+            "expense_id": expense.expense_id,
+            "amount_minor": expense.amount_minor,
+            "currency": expense.currency,
+            "category": expense.category,
+            "description": expense.description,
+            "occurred_at": expense.occurred_at.isoformat(),
+            "recorded_by": expense.recorded_by,
+            "document_id": expense.document_id,
+        }), 200
+    finally:
+        session.close()
+
+
+@finance_bp.route("/expenses", methods=["POST", "OPTIONS"])
 def log_expense():
     """Log an expense entry manually."""
+    # Handle preflight OPTIONS check
+    if request.method == "OPTIONS":
+        return ("", 200)
+
     data = request.get_json() or {}
-    amount_cents = data.get("amount_cents")
+    amount_minor = data.get("amount_minor")
     category = data.get("category")
 
-    if amount_cents is None or not category:
-        return jsonify({"error": "amount_cents and category are required"}), 400
+    if amount_minor is None or not category:
+        return jsonify({"error": "amount_minor and category are required"}), 400
 
-    payment_date = date.fromisoformat(data["payment_date"]) if data.get("payment_date") else None
+    occurred_at = (
+        datetime.fromisoformat(data["occurred_at"])
+        if data.get("occurred_at")
+        else None
+    )
 
     session = SessionLocal()
     try:
         expense = FinanceService.log_expense(
             session=session,
-            amount_cents=int(amount_cents),
+            amount_minor=int(amount_minor),
             category=category,
-            paid_by_id=g.current_user.user_id,
+            recorded_by_id=g.current_user.user_id,
             description=data.get("description"),
-            payment_date=payment_date,
+            occurred_at=occurred_at,
+            currency=data.get("currency", "USD"),
+            document_id=data.get("document_id"),
         )
         return jsonify({
             "expense_id": expense.expense_id,
-            "amount_cents": expense.amount_cents,
+            "amount_minor": expense.amount_minor,
             "category": expense.category,
-            "payment_date": expense.payment_date.isoformat(),
+            "occurred_at": expense.occurred_at.isoformat(),
+            "currency": expense.currency,
         }), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -86,9 +154,79 @@ def log_expense():
         session.close()
 
 
+@finance_bp.route("/expenses/<string:expense_id>", methods=["PUT"])
+def update_expense(expense_id: str):
+    """Edit an existing expense."""
+    data = request.get_json() or {}
+    occurred_at = (
+        datetime.fromisoformat(data["occurred_at"])
+        if data.get("occurred_at")
+        else None
+    )
+
+    session = SessionLocal()
+    try:
+        expense = FinanceService.update_expense(
+            session=session,
+            expense_id=expense_id,
+            amount_minor=int(data["amount_minor"]) if data.get("amount_minor") is not None else None,
+            category=data.get("category"),
+            description=data.get("description"),
+            occurred_at=occurred_at,
+            currency=data.get("currency"),
+            document_id=data.get("document_id"),
+        )
+        return jsonify({
+            "expense_id": expense.expense_id,
+            "amount_minor": expense.amount_minor,
+            "category": expense.category,
+            "occurred_at": expense.occurred_at.isoformat(),
+            "currency": expense.currency,
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@finance_bp.route("/expenses/<string:expense_id>", methods=["DELETE"])
+def delete_expense(expense_id: str):
+    """Delete an expense."""
+    session = SessionLocal()
+    try:
+        FinanceService.delete_expense(session, expense_id)
+        return jsonify({"message": "Expense deleted successfully"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    finally:
+        session.close()
+
+
 # -----------------------------------------------------------------------------
-# Budget Endpoints (US-4.2)
+# Budget Endpoints (CRUD + US-4.2)
 # -----------------------------------------------------------------------------
+
+@finance_bp.route("/budgets", methods=["GET"])
+def get_budgets():
+    """List all category budgets."""
+    session = SessionLocal()
+    try:
+        budgets = FinanceService.list_budgets(session)
+        return jsonify([
+            {
+                "budget_id": b.budget_id,
+                "category": b.category,
+                "limit_minor": b.limit_minor,
+                "currency": b.currency,
+                "period": b.period.value,
+                "period_start": b.period_start.isoformat() if b.period_start else None,
+                "period_end": b.period_end.isoformat() if b.period_end else None,
+            }
+            for b in budgets
+        ]), 200
+    finally:
+        session.close()
+
 
 @finance_bp.route("/budgets", methods=["POST"])
 @require_role(HouseholdRole.ADMIN)
@@ -98,26 +236,27 @@ def set_budget():
     category = data.get("category")
     month = data.get("month")
     year = data.get("year")
-    limit_cents = data.get("limit_cents")
+    limit_minor = data.get("limit_minor")
 
-    if not all([category, month, year, limit_cents is not None]):
-        return jsonify({"error": "category, month, year, and limit_cents are required"}), 400
+    if not all([category, month, year, limit_minor is not None]):
+        return jsonify({"error": "category, month, year, and limit_minor are required"}), 400
 
     session = SessionLocal()
     try:
         budget = FinanceService.set_budget(
             session=session,
             category=category,
+            limit_minor=int(limit_minor),
             month=int(month),
             year=int(year),
-            limit_cents=int(limit_cents),
+            currency=data.get("currency", "USD"),
         )
         return jsonify({
             "budget_id": budget.budget_id,
             "category": budget.category,
-            "limit_cents": budget.limit_cents,
-            "month": budget.month,
-            "year": budget.year,
+            "limit_minor": budget.limit_minor,
+            "period_start": budget.period_start.isoformat() if budget.period_start else None,
+            "period_end": budget.period_end.isoformat() if budget.period_end else None,
         }), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -144,39 +283,148 @@ def check_budget_status():
         session.close()
 
 
+@finance_bp.route("/budgets/<string:budget_id>", methods=["DELETE"])
+@require_role(HouseholdRole.ADMIN)
+def delete_budget(budget_id: str):
+    """Delete a budget limit (Admin only)."""
+    session = SessionLocal()
+    try:
+        FinanceService.delete_budget(session, budget_id)
+        return jsonify({"message": "Budget deleted successfully"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    finally:
+        session.close()
+
+
 # -----------------------------------------------------------------------------
-# Recurring Bills Endpoints (US-4.3)
+# Recurring Bills Endpoints (CRUD + US-4.3)
 # -----------------------------------------------------------------------------
+
+@finance_bp.route("/bills", methods=["GET"])
+def get_bills():
+    """List all registered recurring bills."""
+    session = SessionLocal()
+    try:
+        bills = FinanceService.list_recurring_bills(session)
+        return jsonify([
+            {
+                "bill_id": b.bill_id,
+                "payee": b.payee,
+                "expected_amount_minor": b.expected_amount_minor,
+                "currency": b.currency,
+                "category": b.category,
+                "due_at": b.due_at.isoformat(),
+                "recurrence": b.recurrence,
+            }
+            for b in bills
+        ]), 200
+    finally:
+        session.close()
+
+
+@finance_bp.route("/bills/<string:bill_id>", methods=["GET"])
+def get_single_bill(bill_id: str):
+    """Retrieve a single bill by ID."""
+    session = SessionLocal()
+    try:
+        bill = FinanceService.get_recurring_bill(session, bill_id)
+        if not bill:
+            return jsonify({"error": "Recurring bill not found"}), 404
+        return jsonify({
+            "bill_id": bill.bill_id,
+            "payee": bill.payee,
+            "expected_amount_minor": bill.expected_amount_minor,
+            "currency": bill.currency,
+            "category": bill.category,
+            "due_at": bill.due_at.isoformat(),
+            "recurrence": bill.recurrence,
+        }), 200
+    finally:
+        session.close()
+
 
 @finance_bp.route("/bills", methods=["POST"])
 @require_role(HouseholdRole.ADMIN)
 def create_bill():
     """Register a new recurring bill (Admin only)."""
     data = request.get_json() or {}
-    name = data.get("name")
-    amount_cents = data.get("amount_cents")
-    due_day = data.get("due_day_of_month")
+    payee = data.get("payee")
+    expected_amount_minor = data.get("expected_amount_minor")
+    due_at_raw = data.get("due_at")
 
-    if not all([name, amount_cents is not None, due_day is not None]):
-        return jsonify({"error": "name, amount_cents, and due_day_of_month are required"}), 400
+    if not all([payee, expected_amount_minor is not None, due_at_raw]):
+        return jsonify({"error": "payee, expected_amount_minor, and due_at are required"}), 400
+
+    try:
+        due_at = datetime.fromisoformat(due_at_raw)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid ISO format for due_at"}), 400
 
     session = SessionLocal()
     try:
         bill = FinanceService.create_recurring_bill(
             session=session,
-            name=name,
-            amount_cents=int(amount_cents),
-            due_day_of_month=int(due_day),
+            payee=payee,
+            expected_amount_minor=int(expected_amount_minor),
+            due_at=due_at,
             category=data.get("category"),
+            recurrence=data.get("recurrence", "MONTHLY"),
+            currency=data.get("currency", "USD"),
         )
         return jsonify({
             "bill_id": bill.bill_id,
-            "name": bill.name,
-            "amount_cents": bill.amount_cents,
-            "due_day_of_month": bill.due_day_of_month,
+            "payee": bill.payee,
+            "expected_amount_minor": bill.expected_amount_minor,
+            "due_at": bill.due_at.isoformat(),
         }), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@finance_bp.route("/bills/<string:bill_id>", methods=["PUT"])
+@require_role(HouseholdRole.ADMIN)
+def update_bill(bill_id: str):
+    """Edit a recurring bill (Admin only)."""
+    data = request.get_json() or {}
+    due_at = datetime.fromisoformat(data["due_at"]) if data.get("due_at") else None
+
+    session = SessionLocal()
+    try:
+        bill = FinanceService.update_recurring_bill(
+            session=session,
+            bill_id=bill_id,
+            payee=data.get("payee"),
+            expected_amount_minor=int(data["expected_amount_minor"]) if data.get("expected_amount_minor") is not None else None,
+            due_at=due_at,
+            category=data.get("category"),
+            recurrence=data.get("recurrence"),
+            currency=data.get("currency"),
+        )
+        return jsonify({
+            "bill_id": bill.bill_id,
+            "payee": bill.payee,
+            "expected_amount_minor": bill.expected_amount_minor,
+            "due_at": bill.due_at.isoformat(),
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@finance_bp.route("/bills/<string:bill_id>", methods=["DELETE"])
+@require_role(HouseholdRole.ADMIN)
+def delete_bill(bill_id: str):
+    """Delete a recurring bill (Admin only)."""
+    session = SessionLocal()
+    try:
+        FinanceService.delete_recurring_bill(session, bill_id)
+        return jsonify({"message": "Recurring bill deleted successfully"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
     finally:
         session.close()
 
