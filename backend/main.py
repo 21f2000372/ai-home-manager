@@ -10,6 +10,7 @@ from app.routes.task_routes import task_bp
 from app.routes.agent_routes import agent_bp
 from app.routes.inventory_routes import inventory_bp
 from app.routes.finance_routes import finance_bp
+from app.routes.maintenance_routes import maintenance_bp
 
 
 def create_app() -> Flask:
@@ -24,6 +25,7 @@ def create_app() -> Flask:
     app.register_blueprint(agent_bp)
     app.register_blueprint(inventory_bp)
     app.register_blueprint(finance_bp)
+    app.register_blueprint(maintenance_bp)
 
     @app.route("/health", methods=["GET"])
     def health_check():

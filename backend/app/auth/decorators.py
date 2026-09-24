@@ -25,6 +25,10 @@ def login_required(f: Callable) -> Callable:
     """Validate Bearer token and populate flask.g with the authenticated user."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+
+        if request.method == "OPTIONS":
+            return ("", 200)
+        
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return jsonify({"error": "Missing or malformed Authorization header"}), 401
@@ -66,6 +70,9 @@ def require_role(*allowed_roles: HouseholdRole) -> Callable:
         @wraps(f)
         @login_required
         def wrapped(*args, **kwargs):
+            if request.method == "OPTIONS":
+                return f(*args, **kwargs)
+            
             if g.current_role not in allowed_roles:
                 return jsonify({
                     "error": "Forbidden: insufficient role permissions",
