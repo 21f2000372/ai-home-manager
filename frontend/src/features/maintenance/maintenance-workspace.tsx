@@ -1,77 +1,826 @@
-import { type FormEvent, type ReactNode, useState } from 'react';
-import { AlertTriangle, LoaderCircle, Pencil, Plus, ShieldAlert, Trash2, Wrench, X } from 'lucide-react';
+import { FormEvent, useMemo, useState } from 'react';
+import { ChevronDown, LoaderCircle, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge } from '@/components/design-system/badge';
 import { Button } from '@/components/design-system/button';
 import { Card } from '@/components/design-system/card';
 import { SectionHeading } from '@/components/design-system/section-heading';
+import { HouseholdChat } from '@/components/ai/household-chat';
 import { ApiError } from '@/lib/api/request';
 import { useSessionStore } from '@/stores/session-store';
-import { createAppliance, createIssue, createRepair, deleteAppliance, deleteIssue, deleteRepair, getAppliances, getExpiringWarranties, getIssues, getRepairs, updateAppliance, updateIssue, type Appliance, type ApplianceInput, type Issue, type IssueStatus, type Priority, type RepairInput } from './maintenance-api';
+import {
+  createAppliance,
+  deleteAppliance,
+  deleteIssue,
+  deleteRepair,
+  getAppliances,
+  getExpiringWarranties,
+  getHouseholdMembers,
+  getIssues,
+  getRepairs,
+  logRepair,
+  reportIssue,
+  updateAppliance,
+  updateIssue,
+  type Appliance,
+  type CreateApplianceInput,
+  type CreateIssueInput,
+  type HouseholdMember,
+  type IssueStatus,
+  type LogRepairInput,
+  type MaintenanceIssue,
+  type MaintenancePriority,
+  type Repair,
+} from './maintenance-api';
+import {
+  buildMaintenanceSummary,
+  costMajorToMinor,
+  formatCost,
+  formatWarrantyDate,
+  getNextIssueStatus,
+  toDateInputValue,
+  warrantyTone,
+} from './maintenance-utils';
 
-const applianceKey = ['household', 'maintenance', 'appliances'] as const;
-const warrantyKey = ['household', 'maintenance', 'warranties'] as const;
-const issueKey = ['household', 'maintenance', 'issues'] as const;
-const repairKey = ['household', 'maintenance', 'repairs'] as const;
-const today = () => new Date().toISOString().slice(0, 10);
-const toMinor = (value: string) => value.trim() === '' ? null : Math.round(Number(value) * 100);
-const money = (amount: number | null, currency: string) => amount === null ? 'No cost recorded' : new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount / 100);
-const dateLabel = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
-const messageFor = (error: unknown, fallback: string) => error instanceof ApiError ? error.message : error ? fallback : null;
+const appliancesKey = ['household', 'maintenance', 'appliances'] as const;
+const expiringKey = (days: number) => ['household', 'maintenance', 'expiring', days] as const;
+const issuesKey = (status: string, applianceId: string) => ['household', 'maintenance', 'issues', status, applianceId] as const;
+const repairsKey = (applianceId: string) => ['household', 'maintenance', 'repairs', applianceId] as const;
+const membersKey = ['household', 'members'] as const;
 
-type ApplianceForm = { name: string; brand: string; model: string; purchasedAt: string; warrantyEndsAt: string };
-type IssueForm = { description: string; priority: Priority; applianceId: string };
-type RepairForm = { servicedAt: string; applianceId: string; provider: string; cost: string; currency: string; notes: string };
-const emptyAppliance = (): ApplianceForm => ({ name: '', brand: '', model: '', purchasedAt: '', warrantyEndsAt: '' });
-const emptyIssue = (): IssueForm => ({ description: '', priority: 'Normal', applianceId: '' });
-const emptyRepair = (): RepairForm => ({ servicedAt: today(), applianceId: '', provider: '', cost: '', currency: 'INR', notes: '' });
+const ISSUE_STATUSES: IssueStatus[] = ['Open', 'InProgress', 'Resolved', 'Closed'];
+const PRIORITIES: MaintenancePriority[] = ['Low', 'Normal', 'High'];
+
+function issueTone(status: IssueStatus) {
+  if (status === 'Open') return 'bg-[#F6EADB] text-[#8A5D2F]';
+  if (status === 'InProgress') return 'bg-[#E3EDF8] text-[#346B8E]';
+  if (status === 'Resolved') return 'bg-[#E4F0E8] text-[#3D5F4E]';
+  return 'bg-[#ECEAE4] text-[#676B68]';
+}
+
+function priorityTone(priority: MaintenancePriority) {
+  if (priority === 'High') return 'bg-[#F6EADB] text-[#8A5D2F]';
+  if (priority === 'Low') return 'bg-[#E4F0E8] text-[#3D5F4E]';
+  return 'bg-[#ECEAE4] text-[#676B68]';
+}
+
+function expiryTone(daysRemaining: number) {
+  const tone = warrantyTone(daysRemaining);
+  if (tone === 'urgent') return 'bg-[#B96359]/15 text-[#8B3F36]';
+  if (tone === 'watch') return 'bg-[#F6EADB] text-[#8A5D2F]';
+  return 'bg-[#E4F0E8] text-[#3D5F4E]';
+}
+
+const emptyApplianceForm: CreateApplianceInput = { name: '', brand: '', model: '', purchased_at: '', warranty_ends_at: '' };
+const emptyIssueForm = { description: '', priority: 'Normal' as MaintenancePriority, appliance_id: '', accountable_to: '' };
+const emptyRepairForm = { serviced_at: '', appliance_id: '', provider: '', costMajor: '', currency: 'USD', notes: '' };
 
 export function MaintenanceWorkspace() {
   const queryClient = useQueryClient();
   const role = useSessionStore((state) => state.user?.role);
-  const canManageAssets = role === 'Admin' || role === 'Adult';
-  const canReportIssue = role !== 'Guest';
-  const [applianceOpen, setApplianceOpen] = useState(false);
-  const [issueOpen, setIssueOpen] = useState(false);
-  const [repairOpen, setRepairOpen] = useState(false);
-  const [applianceForm, setApplianceForm] = useState<ApplianceForm>(emptyAppliance);
-  const [issueForm, setIssueForm] = useState<IssueForm>(emptyIssue);
-  const [repairForm, setRepairForm] = useState<RepairForm>(emptyRepair);
-  const [editingAppliance, setEditingAppliance] = useState<Appliance | null>(null);
-  const [remove, setRemove] = useState<{ type: 'appliance' | 'issue' | 'repair'; id: string; name: string } | null>(null);
+  const canManageAppliances = role === 'Adult' || role === 'Admin';
+  const canWriteIssues = role === 'Adult' || role === 'Admin' || role === 'Child';
+  const canViewRepairs = role === 'Adult' || role === 'Admin';
 
-  const appliances = useQuery({ queryKey: applianceKey, queryFn: getAppliances });
-  const warranties = useQuery({ queryKey: warrantyKey, queryFn: getExpiringWarranties });
-  const issues = useQuery({ queryKey: issueKey, queryFn: getIssues });
-  const repairs = useQuery({ queryKey: repairKey, queryFn: getRepairs, enabled: canManageAssets });
-  const refresh = () => Promise.all([queryClient.invalidateQueries({ queryKey: applianceKey }), queryClient.invalidateQueries({ queryKey: warrantyKey }), queryClient.invalidateQueries({ queryKey: issueKey }), queryClient.invalidateQueries({ queryKey: repairKey })]);
-  const applianceMutation = useMutation({ mutationFn: (value: { id?: string; input: ApplianceInput }) => value.id ? updateAppliance(value.id, value.input) : createAppliance(value.input), onSuccess: async () => { await refresh(); closeAppliance(); } });
-  const issueMutation = useMutation({ mutationFn: (value: { id?: string; input: IssueForm & { status?: IssueStatus } }) => value.id ? updateIssue(value.id, { description: value.input.description, priority: value.input.priority, appliance_id: value.input.applianceId || null, status: value.input.status }) : createIssue({ description: value.input.description, priority: value.input.priority, appliance_id: value.input.applianceId || null }), onSuccess: async () => { await refresh(); setIssueOpen(false); setIssueForm(emptyIssue()); } });
-  const repairMutation = useMutation({ mutationFn: createRepair, onSuccess: async () => { await refresh(); setRepairOpen(false); setRepairForm(emptyRepair()); } });
-  const deleteMutation = useMutation({ mutationFn: async () => { if (!remove) return; if (remove.type === 'appliance') return deleteAppliance(remove.id); if (remove.type === 'issue') return deleteIssue(remove.id); return deleteRepair(remove.id); }, onSuccess: async () => { await refresh(); setRemove(null); } });
-  const error = appliances.error ?? warranties.error ?? issues.error ?? repairs.error ?? applianceMutation.error ?? issueMutation.error ?? repairMutation.error ?? deleteMutation.error;
+  const [expiringDays, setExpiringDays] = useState(30);
+  const [issueStatus, setIssueStatus] = useState<IssueStatus | 'All'>('All');
+  const [issueAppliance, setIssueAppliance] = useState('');
+  const [repairAppliance, setRepairAppliance] = useState('');
 
-  function closeAppliance() { setApplianceOpen(false); setEditingAppliance(null); setApplianceForm(emptyAppliance()); }
-  function editAppliance(appliance: Appliance) { setEditingAppliance(appliance); setApplianceForm({ name: appliance.name, brand: appliance.brand ?? '', model: appliance.model ?? '', purchasedAt: appliance.purchased_at ?? '', warrantyEndsAt: appliance.warranty_ends_at ?? '' }); setApplianceOpen(true); }
-  function submitAppliance(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!applianceForm.name.trim()) return; applianceMutation.mutate({ id: editingAppliance?.appliance_id, input: { name: applianceForm.name.trim(), brand: applianceForm.brand.trim() || null, model: applianceForm.model.trim() || null, purchased_at: applianceForm.purchasedAt || null, warranty_ends_at: applianceForm.warrantyEndsAt || null } }); }
-  function submitIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!issueForm.description.trim()) return; issueMutation.mutate({ input: { ...issueForm, description: issueForm.description.trim() } }); }
-  function changeStatus(issue: Issue, status: IssueStatus) { issueMutation.mutate({ id: issue.issue_id, input: { description: issue.description, priority: issue.priority, applianceId: issue.appliance_id ?? '', status } }); }
-  function submitRepair(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const cost = toMinor(repairForm.cost); if (!repairForm.servicedAt || (cost !== null && (!Number.isFinite(cost) || cost < 0))) return; const input: RepairInput = { serviced_at: repairForm.servicedAt, appliance_id: repairForm.applianceId || null, provider: repairForm.provider.trim() || null, cost_minor: cost, currency: repairForm.currency, notes: repairForm.notes.trim() || null }; repairMutation.mutate(input); }
+  const [applianceComposerOpen, setApplianceComposerOpen] = useState(false);
+  const [editingApplianceId, setEditingApplianceId] = useState<string | null>(null);
+  const [applianceForm, setApplianceForm] = useState<CreateApplianceInput>(emptyApplianceForm);
 
-  const errorMessage = messageFor(error, 'HomeOps could not load or update maintenance records.');
-  return <section className="space-y-6"><header className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end"><div><p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#5E9278]"><Wrench size={14} />Home maintenance</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Care for the home</h1><p className="mt-2 max-w-xl text-sm leading-6 muted">Track appliances, report issues early, and keep a clear service history.</p></div>{canReportIssue && <Button onClick={() => setIssueOpen((value) => !value)}>{issueOpen ? <X size={16} /> : <Plus size={16} />}{issueOpen ? 'Close form' : 'Report issue'}</Button>}</header>{!canReportIssue && <Notice text="Guest accounts can view maintenance information but cannot report or update issues." />}{errorMessage && <Error message={errorMessage} />}
-    {issueOpen && <Card className="p-5 sm:p-6"><SectionHeading title="Report a maintenance issue" detail="Give the household a clear, actionable problem report." /><form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={submitIssue}><Field label="What needs attention?" className="md:col-span-2"><textarea required className="task-input min-h-24" placeholder="e.g. Water is leaking under the kitchen sink" value={issueForm.description} onChange={(e) => setIssueForm({ ...issueForm, description: e.target.value })} /></Field><Field label="Priority"><select className="task-input" value={issueForm.priority} onChange={(e) => setIssueForm({ ...issueForm, priority: e.target.value as Priority })}><option>Low</option><option>Normal</option><option>High</option></select></Field><ApplianceSelect appliances={appliances.data ?? []} value={issueForm.applianceId} onChange={(applianceId) => setIssueForm({ ...issueForm, applianceId })} /><div className="flex justify-end gap-2 md:col-span-2"><Button tone="neutral" onClick={() => { setIssueOpen(false); setIssueForm(emptyIssue()); }}>Cancel</Button><Button type="submit" disabled={issueMutation.isPending}>{issueMutation.isPending && <LoaderCircle className="animate-spin" size={16} />}Report issue</Button></div></form></Card>}
-    <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]"><Card className="p-5 sm:p-6"><SectionHeading title="Open maintenance issues" detail={`${issues.data?.filter((issue) => !['Resolved', 'Closed'].includes(issue.status)).length ?? 0} currently active`} /><div className="mt-5 space-y-3">{issues.isLoading ? <Loading label="Loading issues" /> : issues.data?.length ? issues.data.map((issue) => <IssueRow key={issue.issue_id} issue={issue} appliances={appliances.data ?? []} canEdit={canReportIssue} canDelete={canManageAssets} busy={issueMutation.isPending} onStatus={(status) => changeStatus(issue, status)} onDelete={() => setRemove({ type: 'issue', id: issue.issue_id, name: 'this issue' })} />) : <Empty title="No issues reported" detail="Report problems as soon as you notice them." />}</div></Card><div className="space-y-5"><Card className="p-5 sm:p-6"><SectionHeading title="Warranty watch" detail="Expiring in the next 30 days" action={<Badge tone={warranties.data?.length ? 'attention' : 'ready'}>{warranties.data?.length ?? 0} alerts</Badge>} />{warranties.isLoading ? <Loading label="Checking warranties" /> : warranties.data?.length ? <div className="mt-5 space-y-3">{warranties.data.map((warranty) => <div key={warranty.appliance_id} className="flex gap-3 rounded-xl bg-[#FFF0E9] p-4"><ShieldAlert className="mt-0.5 shrink-0 text-[#C2603C]" size={18} /><div><p className="text-sm font-semibold">{warranty.name}</p><p className="mt-1 text-xs text-[#8D4B35]">Ends {dateLabel(warranty.warranty_ends_at ?? '')} · {warranty.days_remaining} days left</p></div></div>)}</div> : <Empty title="No expiring warranties" detail="Warranty alerts will appear here when an end date is near." />}</Card></div></div>
-    <Card className="p-5 sm:p-6"><SectionHeading title="Appliances" detail="Registered household equipment" action={canManageAssets ? <Button tone="neutral" onClick={() => applianceOpen ? closeAppliance() : setApplianceOpen(true)}>{applianceOpen ? <X size={16} /> : <Plus size={16} />}{applianceOpen ? 'Close form' : 'Add appliance'}</Button> : <Badge tone="neutral">Adult/Admin managed</Badge>} />{applianceOpen && <form className="mt-5 grid gap-3 md:grid-cols-2" onSubmit={submitAppliance}><Field label="Appliance name"><input required className="task-input" placeholder="e.g. Washing machine" value={applianceForm.name} onChange={(e) => setApplianceForm({ ...applianceForm, name: e.target.value })} /></Field><Field label="Brand (optional)"><input className="task-input" value={applianceForm.brand} onChange={(e) => setApplianceForm({ ...applianceForm, brand: e.target.value })} /></Field><Field label="Model (optional)"><input className="task-input" value={applianceForm.model} onChange={(e) => setApplianceForm({ ...applianceForm, model: e.target.value })} /></Field><Field label="Purchase date (optional)"><input type="date" className="task-input" value={applianceForm.purchasedAt} onChange={(e) => setApplianceForm({ ...applianceForm, purchasedAt: e.target.value })} /></Field><Field label="Warranty end date (optional)"><input type="date" className="task-input" value={applianceForm.warrantyEndsAt} onChange={(e) => setApplianceForm({ ...applianceForm, warrantyEndsAt: e.target.value })} /></Field><div className="flex items-end justify-end gap-2"><Button tone="neutral" onClick={closeAppliance}>Cancel</Button><Button type="submit" disabled={applianceMutation.isPending}>{applianceMutation.isPending && <LoaderCircle className="animate-spin" size={16} />}{editingAppliance ? 'Save appliance' : 'Add appliance'}</Button></div></form>}<div className="mt-5 grid gap-3 lg:grid-cols-3">{appliances.isLoading ? <Loading label="Loading appliances" /> : appliances.data?.length ? appliances.data.map((appliance) => <article key={appliance.appliance_id} className="rounded-xl border border-[var(--line)] p-4"><p className="text-sm font-semibold">{appliance.name}</p><p className="mt-1 text-xs muted">{[appliance.brand, appliance.model].filter(Boolean).join(' · ') || 'No brand or model recorded'}</p><p className="mt-4 text-xs muted">{appliance.warranty_ends_at ? `Warranty ends ${dateLabel(appliance.warranty_ends_at)}` : 'No warranty date recorded'}</p>{canManageAssets && <div className="mt-4 flex gap-2"><Button tone="neutral" onClick={() => editAppliance(appliance)}><Pencil size={16} />Edit</Button><Button tone="neutral" onClick={() => setRemove({ type: 'appliance', id: appliance.appliance_id, name: appliance.name })}><Trash2 size={16} />Delete</Button></div>}</article>) : <Empty title="No appliances registered" detail={canManageAssets ? 'Add major equipment and its warranty date.' : 'An Adult or Admin can register appliances.'} />}</div></Card>
-    {canManageAssets && <Card className="p-5 sm:p-6"><SectionHeading title="Repair history" detail="Service costs are visible to Adult and Admin members" action={<Button tone="neutral" onClick={() => setRepairOpen((value) => !value)}>{repairOpen ? <X size={16} /> : <Plus size={16} />}{repairOpen ? 'Close form' : 'Log repair'}</Button>} />{repairOpen && <form className="mt-5 grid gap-3 md:grid-cols-3" onSubmit={submitRepair}><Field label="Service date"><input required type="date" className="task-input" value={repairForm.servicedAt} onChange={(e) => setRepairForm({ ...repairForm, servicedAt: e.target.value })} /></Field><ApplianceSelect appliances={appliances.data ?? []} value={repairForm.applianceId} onChange={(applianceId) => setRepairForm({ ...repairForm, applianceId })} /><Field label="Provider (optional)"><input className="task-input" value={repairForm.provider} onChange={(e) => setRepairForm({ ...repairForm, provider: e.target.value })} /></Field><Field label="Cost (optional)"><input min="0" step="0.01" type="number" className="task-input" value={repairForm.cost} onChange={(e) => setRepairForm({ ...repairForm, cost: e.target.value })} /></Field><Field label="Currency"><select className="task-input" value={repairForm.currency} onChange={(e) => setRepairForm({ ...repairForm, currency: e.target.value })}><option value="INR">INR</option><option value="USD">USD</option><option value="EUR">EUR</option></select></Field><Field label="Notes (optional)"><input className="task-input" value={repairForm.notes} onChange={(e) => setRepairForm({ ...repairForm, notes: e.target.value })} /></Field><div className="flex justify-end gap-2 md:col-span-3"><Button tone="neutral" onClick={() => { setRepairOpen(false); setRepairForm(emptyRepair()); }}>Cancel</Button><Button type="submit" disabled={repairMutation.isPending}>{repairMutation.isPending && <LoaderCircle className="animate-spin" size={16} />}Log repair</Button></div></form>}<div className="mt-5 space-y-3">{repairs.isLoading ? <Loading label="Loading repairs" /> : repairs.data?.length ? repairs.data.map((repair) => <div key={repair.repair_id} className="flex flex-col justify-between gap-3 rounded-xl border border-[var(--line)] p-4 sm:flex-row sm:items-center"><div><p className="text-sm font-semibold">{repair.provider || 'Service record'}</p><p className="mt-1 text-xs muted">{dateLabel(repair.serviced_at)} · {repair.notes || 'No notes recorded'}</p></div><div className="flex items-center gap-3"><span className="text-sm font-bold">{money(repair.cost_minor, repair.currency)}</span><Button tone="neutral" aria-label="Delete repair" onClick={() => setRemove({ type: 'repair', id: repair.repair_id, name: 'this repair record' })}><Trash2 size={16} /></Button></div></div>) : <Empty title="No repairs recorded" detail="Log completed services to keep a reliable history." />}</div></Card>}
-    {remove && <Confirm name={remove.name} busy={deleteMutation.isPending} onCancel={() => setRemove(null)} onConfirm={() => deleteMutation.mutate()} />}</section>;
+  const [issueComposerOpen, setIssueComposerOpen] = useState(false);
+  const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
+  const [editingIssueStatus, setEditingIssueStatus] = useState<IssueStatus>('Open');
+  const [issueForm, setIssueForm] = useState(emptyIssueForm);
+
+  const [repairComposerOpen, setRepairComposerOpen] = useState(false);
+  const [repairForm, setRepairForm] = useState(emptyRepairForm);
+
+  const appliancesQuery = useQuery({ queryKey: appliancesKey, queryFn: getAppliances });
+  const expiringQuery = useQuery({ queryKey: expiringKey(expiringDays), queryFn: () => getExpiringWarranties(expiringDays) });
+  const issuesQuery = useQuery({
+    queryKey: issuesKey(issueStatus, issueAppliance),
+    queryFn: () => getIssues({ status: issueStatus, appliance_id: issueAppliance || undefined }),
+  });
+  const repairsQuery = useQuery({
+    queryKey: repairsKey(repairAppliance),
+    queryFn: () => getRepairs(repairAppliance || undefined),
+    enabled: canViewRepairs,
+  });
+  const membersQuery = useQuery({ queryKey: membersKey, queryFn: getHouseholdMembers });
+
+  const appliances = useMemo(() => appliancesQuery.data ?? [], [appliancesQuery.data]);
+  const applianceName = useMemo(() => {
+    const lookup = new Map(appliances.map((item) => [item.appliance_id, item.name]));
+    return (id: string | null) => (id ? (lookup.get(id) ?? 'Unknown appliance') : null);
+  }, [appliances]);
+
+  async function invalidateMaintenance() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['household', 'maintenance'] }),
+    ]);
+  }
+
+  const createApplianceMutation = useMutation({
+    mutationFn: createAppliance,
+    onSuccess: async () => {
+      await invalidateMaintenance();
+      setApplianceForm(emptyApplianceForm);
+      setApplianceComposerOpen(false);
+    },
+  });
+  const updateApplianceMutation = useMutation({
+    mutationFn: ({ applianceId, input }: { applianceId: string; input: CreateApplianceInput }) => updateAppliance(applianceId, input),
+    onSuccess: async () => {
+      await invalidateMaintenance();
+      setApplianceForm(emptyApplianceForm);
+      setEditingApplianceId(null);
+      setApplianceComposerOpen(false);
+    },
+  });
+  const deleteApplianceMutation = useMutation({
+    mutationFn: deleteAppliance,
+    onSuccess: async () => {
+      await invalidateMaintenance();
+    },
+  });
+
+  const reportIssueMutation = useMutation({
+    mutationFn: (input: CreateIssueInput) => reportIssue(input),
+    onSuccess: async () => {
+      await invalidateMaintenance();
+      setIssueForm(emptyIssueForm);
+      setIssueComposerOpen(false);
+    },
+  });
+  const updateIssueMutation = useMutation({
+    mutationFn: ({ issueId, status, description, priority, accountableTo }: { issueId: string; status?: IssueStatus; description?: string; priority?: MaintenancePriority; accountableTo?: string | null }) =>
+      updateIssue(issueId, { status, description, priority, accountable_to: accountableTo }),
+    onSuccess: async () => {
+      await invalidateMaintenance();
+      setIssueForm(emptyIssueForm);
+      setEditingIssueId(null);
+      setIssueComposerOpen(false);
+    },
+  });
+  const deleteIssueMutation = useMutation({
+    mutationFn: deleteIssue,
+    onSuccess: async () => {
+      await invalidateMaintenance();
+    },
+  });
+
+  const logRepairMutation = useMutation({
+    mutationFn: (input: LogRepairInput) => logRepair(input),
+    onSuccess: async () => {
+      await invalidateMaintenance();
+      setRepairForm(emptyRepairForm);
+      setRepairComposerOpen(false);
+    },
+  });
+  const deleteRepairMutation = useMutation({
+    mutationFn: deleteRepair,
+    onSuccess: async () => {
+      await invalidateMaintenance();
+    },
+  });
+
+  const summary = useMemo(
+    () => buildMaintenanceSummary(appliances, issuesQuery.data ?? [], expiringQuery.data ?? [], repairsQuery.data ?? []),
+    [appliances, issuesQuery, expiringQuery, repairsQuery],
+  );
+
+  function submitAppliance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!applianceForm.name.trim()) return;
+    if (editingApplianceId) {
+      updateApplianceMutation.mutate({ applianceId: editingApplianceId, input: applianceForm });
+    } else {
+      createApplianceMutation.mutate(applianceForm);
+    }
+  }
+
+  function beginEditAppliance(item: Appliance) {
+    setApplianceForm({
+      name: item.name,
+      brand: item.brand ?? '',
+      model: item.model ?? '',
+      purchased_at: toDateInputValue(item.purchased_at),
+      warranty_ends_at: toDateInputValue(item.warranty_ends_at),
+    });
+    setEditingApplianceId(item.appliance_id);
+    setApplianceComposerOpen(true);
+  }
+
+  function submitIssue(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!issueForm.description.trim() && !editingIssueId) return;
+    if (editingIssueId) {
+      updateIssueMutation.mutate({
+        issueId: editingIssueId,
+        status: editingIssueStatus,
+        description: issueForm.description.trim() || undefined,
+        priority: issueForm.priority,
+        accountableTo: issueForm.accountable_to || null,
+      });
+    } else {
+      reportIssueMutation.mutate({
+        description: issueForm.description,
+        priority: issueForm.priority,
+        appliance_id: issueForm.appliance_id || undefined,
+        accountable_to: issueForm.accountable_to || undefined,
+      });
+    }
+  }
+
+  function beginEditIssue(issue: MaintenanceIssue) {
+    setIssueForm({
+      description: issue.description,
+      priority: issue.priority,
+      appliance_id: issue.appliance_id ?? '',
+      accountable_to: issue.accountable_to ?? '',
+    });
+    setEditingIssueStatus(issue.status);
+    setEditingIssueId(issue.issue_id);
+    setIssueComposerOpen(true);
+  }
+
+  function submitRepair(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!repairForm.serviced_at) return;
+    const costMinor = costMajorToMinor(repairForm.costMajor);
+    if (repairForm.costMajor.trim() && costMinor === null) return;
+    logRepairMutation.mutate({
+      serviced_at: repairForm.serviced_at,
+      appliance_id: repairForm.appliance_id || undefined,
+      provider: repairForm.provider || undefined,
+      cost_minor: costMinor,
+      currency: repairForm.currency || 'USD',
+      notes: repairForm.notes || undefined,
+    });
+  }
+
+  const error =
+    appliancesQuery.error ??
+    expiringQuery.error ??
+    issuesQuery.error ??
+    repairsQuery.error ??
+    membersQuery.error ??
+    createApplianceMutation.error ??
+    updateApplianceMutation.error ??
+    deleteApplianceMutation.error ??
+    reportIssueMutation.error ??
+    updateIssueMutation.error ??
+    deleteIssueMutation.error ??
+    logRepairMutation.error ??
+    deleteRepairMutation.error;
+  const errorMessage = error instanceof ApiError ? error.message : error ? 'HomeOps could not update maintenance. Please try again.' : null;
+
+  const members = membersQuery.data ?? [];
+
+  return (
+    <section className="space-y-6">
+      <div className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#5E9278]">Home maintenance</p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Maintenance</h1>
+          <p className="mt-2 max-w-xl text-sm leading-6 muted">
+            Track appliances and warranties, report household issues, and keep a repair history — live from the backend.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {canManageAppliances && (
+            <Button
+              tone="neutral"
+              onClick={() => {
+                setApplianceComposerOpen((open) => !open);
+                setEditingApplianceId(null);
+                setApplianceForm(emptyApplianceForm);
+              }}
+            >
+              {applianceComposerOpen ? <X size={16} /> : <Plus size={16} />}
+              {applianceComposerOpen ? 'Close' : 'Add appliance'}
+            </Button>
+          )}
+          {canWriteIssues && (
+            <Button
+              tone="neutral"
+              onClick={() => {
+                setIssueComposerOpen((open) => !open);
+                setEditingIssueId(null);
+                setIssueForm(emptyIssueForm);
+              }}
+            >
+              {issueComposerOpen ? <X size={16} /> : <Plus size={16} />}
+              {issueComposerOpen ? 'Close' : 'Report issue'}
+            </Button>
+          )}
+          {canViewRepairs && (
+            <Button
+              onClick={() => {
+                setRepairComposerOpen((open) => !open);
+                setRepairForm(emptyRepairForm);
+              }}
+            >
+              {repairComposerOpen ? <X size={16} /> : <Plus size={16} />}
+              {repairComposerOpen ? 'Close' : 'Log repair'}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {errorMessage && <p role="alert" className="rounded-xl border border-[#B96359]/30 bg-[#B96359]/10 px-4 py-3 text-sm text-[#8B3F36]">{errorMessage}</p>}
+      {!canWriteIssues && !canManageAppliances && (
+        <p className="rounded-xl bg-[#ECEAE4] px-4 py-3 text-sm muted">Guest accounts have read-only access to maintenance.</p>
+      )}
+
+      <HouseholdChat
+        title="Ask about maintenance"
+        description="Ask about warranties, issues, or service history. The assistant will respond through the household agent."
+        initialMessage="Ask about your home — for example, “Which warranties expire soon?”"
+        onMessageProcessed={() => invalidateMaintenance()}
+      />
+
+      <div className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
+        <div className="space-y-5">
+          <AppliancesSection
+            appliances={appliances}
+            expiring={expiringQuery.data ?? []}
+            expiringDays={expiringDays}
+            onExpiringDaysChange={setExpiringDays}
+            isLoading={appliancesQuery.isLoading || expiringQuery.isLoading}
+            composerOpen={applianceComposerOpen && canManageAppliances}
+            form={applianceForm}
+            setForm={setApplianceForm}
+            isEditing={Boolean(editingApplianceId)}
+            isPending={createApplianceMutation.isPending || updateApplianceMutation.isPending}
+            onSubmit={submitAppliance}
+            onEdit={beginEditAppliance}
+            onDelete={(id) => deleteApplianceMutation.mutate(id)}
+            canManage={canManageAppliances}
+          />
+
+          <IssuesSection
+            issues={issuesQuery.data ?? []}
+            appliances={appliances}
+            applianceName={applianceName}
+            statusFilter={issueStatus}
+            onStatusFilterChange={setIssueStatus}
+            applianceFilter={issueAppliance}
+            onApplianceFilterChange={setIssueAppliance}
+            isLoading={issuesQuery.isLoading}
+            composerOpen={issueComposerOpen && canWriteIssues}
+            form={issueForm}
+            setForm={setIssueForm}
+            members={members}
+            editingStatus={editingIssueStatus}
+            onEditingStatusChange={setEditingIssueStatus}
+            isEditing={Boolean(editingIssueId)}
+            isPending={reportIssueMutation.isPending || updateIssueMutation.isPending}
+            onSubmit={submitIssue}
+            onEdit={beginEditIssue}
+            onAdvance={(issue) => updateIssueMutation.mutate({ issueId: issue.issue_id, status: getNextIssueStatus(issue.status) })}
+            onDelete={(id) => deleteIssueMutation.mutate(id)}
+            canWrite={canWriteIssues}
+            canDelete={canManageAppliances}
+          />
+
+          {canViewRepairs ? (
+            <RepairsSection
+              repairs={repairsQuery.data ?? []}
+              appliances={appliances}
+              applianceName={applianceName}
+              applianceFilter={repairAppliance}
+              onApplianceFilterChange={setRepairAppliance}
+              isLoading={repairsQuery.isLoading}
+              composerOpen={repairComposerOpen}
+              form={repairForm}
+              setForm={setRepairForm}
+              isPending={logRepairMutation.isPending}
+              onSubmit={submitRepair}
+              onDelete={(id) => deleteRepairMutation.mutate(id)}
+            />
+          ) : (
+            <Card className="p-5 sm:p-6">
+              <SectionHeading title="Repair history" detail="Service records and costs" />
+              <div className="mt-6 rounded-2xl bg-[#ECEAE4] p-6 text-sm muted">
+                <p className="font-semibold text-[var(--ink)]">Restricted</p>
+                <p className="mt-1">Repair history and costs are visible to Adult and Admin members only.</p>
+              </div>
+            </Card>
+          )}
+        </div>
+
+        <div className="space-y-5">
+          <Card className="p-6">
+            <SectionHeading title="Maintenance rhythm" detail="A quiet view of home health" />
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <Metric value={summary.appliances} label="Appliances" />
+              <Metric value={summary.openIssues} label="Open issues" />
+              <Metric value={summary.expiringSoon} label={`Expiring ≤ ${expiringDays}d`} />
+              <Metric value={formatCost(summary.repairSpendMinor, summary.repairCurrency)} label="Repair spend" wide />
+            </div>
+          </Card>
+
+          <Card className="bg-[#284837] p-6 text-white">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#D19A4C]">HomeOps tip</p>
+            <p className="mt-3 text-lg font-bold leading-snug">Log repairs while covered by warranty.</p>
+            <p className="mt-2 text-sm leading-6 text-[#D2E6D8]">Expiring warranties are checked live — report issues before coverage ends.</p>
+          </Card>
+        </div>
+      </div>
+    </section>
+  );
 }
 
-function ApplianceSelect({ appliances, value, onChange }: { appliances: Appliance[]; value: string; onChange: (value: string) => void }) { return <Field label="Appliance (optional)"><select className="task-input" value={value} onChange={(e) => onChange(e.target.value)}><option value="">Not linked to an appliance</option>{appliances.map((appliance) => <option key={appliance.appliance_id} value={appliance.appliance_id}>{appliance.name}</option>)}</select></Field>; }
-function IssueRow({ issue, appliances, canEdit, canDelete, busy, onStatus, onDelete }: { issue: Issue; appliances: Appliance[]; canEdit: boolean; canDelete: boolean; busy: boolean; onStatus: (status: IssueStatus) => void; onDelete: () => void }) { const appliance = appliances.find((item) => item.appliance_id === issue.appliance_id); return <article className="rounded-xl border border-[var(--line)] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:justify-between"><div className="flex gap-3"><AlertTriangle className={issue.priority === 'High' ? 'mt-0.5 shrink-0 text-[#C2603C]' : 'mt-0.5 shrink-0 text-[#5E9278]'} size={18} /><div><p className="text-sm font-semibold">{issue.description}</p><p className="mt-1 text-xs muted">{appliance?.name || 'General home issue'} · Reported {dateLabel(issue.created_at)}</p></div></div><Badge tone={issue.priority === 'High' ? 'attention' : issue.status === 'Resolved' || issue.status === 'Closed' ? 'ready' : 'planned'}>{issue.status}</Badge></div>{canEdit && <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-4"><select aria-label="Issue status" className="task-input max-w-40" value={issue.status} disabled={busy} onChange={(e) => onStatus(e.target.value as IssueStatus)}><option>Open</option><option value="InProgress">In progress</option><option>Resolved</option><option>Closed</option></select>{canDelete && <Button tone="neutral" onClick={onDelete}><Trash2 size={16} />Delete</Button>}</div>}</article>; }
-function Field({ label, className, children }: { label: string; className?: string; children: ReactNode }) { return <label className={className}><span className="mb-1.5 block text-sm font-semibold">{label}</span>{children}</label>; }
-function Loading({ label }: { label: string }) { return <p className="mt-5 flex items-center gap-2 text-sm muted"><LoaderCircle className="animate-spin" size={16} />{label}…</p>; }
-function Empty({ title, detail }: { title: string; detail: string }) { return <div className="mt-5 rounded-xl bg-[var(--surface-muted)] p-4"><p className="text-sm font-semibold">{title}</p><p className="mt-1 text-xs muted">{detail}</p></div>; }
-function Notice({ text }: { text: string }) { return <p className="rounded-xl bg-[#ECEAE4] px-4 py-3 text-sm muted">{text}</p>; }
-function Error({ message }: { message: string }) { return <p role="alert" className="rounded-xl border border-[#B96359]/30 bg-[#B96359]/10 px-4 py-3 text-sm text-[#8B3F36]">{message}</p>; }
-function Confirm({ name, busy, onCancel, onConfirm }: { name: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) { return <Card className="border-[#B96359]/30 p-5"><p className="font-semibold">Delete {name}?</p><p className="mt-1 text-sm muted">This cannot be undone.</p><div className="mt-4 flex justify-end gap-2"><Button tone="neutral" onClick={onCancel} disabled={busy}>Cancel</Button><Button tone="danger" onClick={onConfirm} disabled={busy}>{busy && <LoaderCircle className="animate-spin" size={16} />}Delete</Button></div></Card>; }
+// --- Section 1: Appliances & warranties ---
+
+function AppliancesSection(props: {
+  appliances: Appliance[];
+  expiring: { appliance_id: string; name: string; brand: string | null; model: string | null; warranty_ends_at: string; days_remaining: number }[];
+  expiringDays: number;
+  onExpiringDaysChange: (days: number) => void;
+  isLoading: boolean;
+  composerOpen: boolean;
+  form: CreateApplianceInput;
+  setForm: (value: CreateApplianceInput) => void;
+  isEditing: boolean;
+  isPending: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onEdit: (item: Appliance) => void;
+  onDelete: (id: string) => void;
+  canManage: boolean;
+}) {
+  return (
+    <Card className="p-5 sm:p-6">
+      <SectionHeading
+        title="Appliances & warranties"
+        detail={`${props.appliances.length} tracked · ${props.expiring.length} expiring`}
+        action={
+          <select
+            aria-label="Warranty window"
+            value={props.expiringDays}
+            onChange={(event) => props.onExpiringDaysChange(Number(event.target.value))}
+            className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold"
+          >
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+          </select>
+        }
+      />
+
+      {props.expiring.length > 0 && (
+        <div className="mt-4 rounded-xl bg-[#F6EADB] p-4">
+          <p className="text-sm font-semibold text-[#8A5D2F]">Warranties expiring within {props.expiringDays} days</p>
+          <div className="mt-2 space-y-1">
+            {props.expiring.map((item) => (
+              <p key={item.appliance_id} className="text-xs text-[#8d4b35]">
+                {item.name} — {formatWarrantyDate(item.warranty_ends_at)} ({item.days_remaining}d left)
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {props.composerOpen && (
+        <form className="mt-4 grid gap-4 rounded-2xl border border-[var(--line)] p-4 md:grid-cols-2" onSubmit={props.onSubmit}>
+          <label className="md:col-span-2">
+            <span className="mb-1.5 block text-sm font-semibold">Appliance name</span>
+            <input required value={props.form.name} onChange={(event) => props.setForm({ ...props.form, name: event.target.value })} className="task-input" placeholder="e.g. Dishwasher" />
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Brand <span className="font-normal muted">(optional)</span></span>
+            <input value={props.form.brand ?? ''} onChange={(event) => props.setForm({ ...props.form, brand: event.target.value })} className="task-input" placeholder="e.g. Bosch" />
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Model <span className="font-normal muted">(optional)</span></span>
+            <input value={props.form.model ?? ''} onChange={(event) => props.setForm({ ...props.form, model: event.target.value })} className="task-input" placeholder="e.g. SMV4HCX19N" />
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Purchased <span className="font-normal muted">(optional)</span></span>
+            <input type="date" value={props.form.purchased_at ?? ''} onChange={(event) => props.setForm({ ...props.form, purchased_at: event.target.value })} className="task-input" />
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Warranty ends <span className="font-normal muted">(optional)</span></span>
+            <input type="date" value={props.form.warranty_ends_at ?? ''} onChange={(event) => props.setForm({ ...props.form, warranty_ends_at: event.target.value })} className="task-input" />
+          </label>
+          <div className="md:col-span-2 flex justify-end">
+            <Button type="submit" disabled={props.isPending}>{props.isPending && <LoaderCircle className="animate-spin" size={16} />}{props.isPending ? 'Saving…' : props.isEditing ? 'Update appliance' : 'Add appliance'}</Button>
+          </div>
+        </form>
+      )}
+
+      {props.isLoading ? (
+        <div className="flex min-h-32 items-center justify-center gap-2 text-sm muted"><LoaderCircle className="animate-spin" size={18} />Loading appliances</div>
+      ) : props.appliances.length ? (
+        <div className="mt-4 space-y-3">
+          {props.appliances.map((item) => (
+            <article key={item.appliance_id} className="flex items-start gap-3 rounded-2xl border border-[var(--line)] p-4 transition hover:bg-[#ECEAE4]/60">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[var(--ink)]">{item.name}</p>
+                <p className="mt-1 text-xs muted">
+                  {[item.brand, item.model].filter(Boolean).join(' · ') || 'No brand/model'} · Warranty: {formatWarrantyDate(item.warranty_ends_at)}
+                </p>
+              </div>
+              {props.canManage && (
+                <div className="flex shrink-0 items-center gap-1">
+                  <button type="button" aria-label={`Edit ${item.name}`} title={`Edit ${item.name}`} onClick={() => props.onEdit(item)} className="grid size-8 place-items-center rounded-full text-[#676B68] transition hover:bg-[#ECEAE4] hover:text-[#284837]">
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${item.name}`}
+                    title={`Delete ${item.name}`}
+                    onClick={() => { if (window.confirm(`Delete ${item.name}? Its service records will also be removed.`)) props.onDelete(item.appliance_id); }}
+                    className="grid size-8 place-items-center rounded-full text-[#676B68] transition hover:bg-[#B96359]/10 hover:text-[#8B3F36]"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl bg-[#ECEAE4] p-6 text-sm muted">
+          <p className="font-semibold text-[var(--ink)]">No appliances yet</p>
+          <p className="mt-1">Add the first appliance to start tracking warranties.</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// --- Section 2: Issues ---
+
+function IssuesSection(props: {
+  issues: MaintenanceIssue[];
+  appliances: Appliance[];
+  applianceName: (id: string | null) => string | null;
+  statusFilter: IssueStatus | 'All';
+  onStatusFilterChange: (value: IssueStatus | 'All') => void;
+  applianceFilter: string;
+  onApplianceFilterChange: (value: string) => void;
+  isLoading: boolean;
+  composerOpen: boolean;
+  form: { description: string; priority: MaintenancePriority; appliance_id: string; accountable_to: string };
+  setForm: (value: { description: string; priority: MaintenancePriority; appliance_id: string; accountable_to: string }) => void;
+  members: HouseholdMember[];
+  editingStatus: IssueStatus;
+  onEditingStatusChange: (value: IssueStatus) => void;
+  isEditing: boolean;
+  isPending: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onEdit: (issue: MaintenanceIssue) => void;
+  onAdvance: (issue: MaintenanceIssue) => void;
+  onDelete: (id: string) => void;
+  canWrite: boolean;
+  canDelete: boolean;
+}) {
+  return (
+    <Card className="p-5 sm:p-6">
+      <SectionHeading title="Maintenance issues" detail={`${props.issues.length} reported`} />
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="relative">
+          <select
+            aria-label="Filter by status"
+            value={props.statusFilter}
+            onChange={(event) => props.onStatusFilterChange(event.target.value as IssueStatus | 'All')}
+            className="task-input appearance-none !w-auto pr-9 text-xs font-semibold"
+          >
+            <option value="All">All statuses</option>
+            {ISSUE_STATUSES.map((status) => <option key={status} value={status}>{status === 'InProgress' ? 'In progress' : status}</option>)}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#676B68]" size={14} />
+        </span>
+        <span className="relative">
+          <select
+            aria-label="Filter by appliance"
+            value={props.applianceFilter}
+            onChange={(event) => props.onApplianceFilterChange(event.target.value)}
+            className="task-input appearance-none !w-auto pr-9 text-xs font-semibold"
+          >
+            <option value="">All appliances</option>
+            {props.appliances.map((item) => <option key={item.appliance_id} value={item.appliance_id}>{item.name}</option>)}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#676B68]" size={14} />
+        </span>
+      </div>
+
+      {props.composerOpen && (
+        <form className="mt-4 grid gap-4 rounded-2xl border border-[var(--line)] p-4 md:grid-cols-2" onSubmit={props.onSubmit}>
+          <label className="md:col-span-2">
+            <span className="mb-1.5 block text-sm font-semibold">Issue description</span>
+            <textarea required={!props.isEditing} value={props.form.description} onChange={(event) => props.setForm({ ...props.form, description: event.target.value })} className="task-input min-h-20 resize-y py-3" placeholder="e.g. The AC is making a rattling noise" />
+          </label>
+          {props.isEditing && (
+            <label>
+              <span className="mb-1.5 block text-sm font-semibold">Status</span>
+              <select value={props.editingStatus} onChange={(event) => props.onEditingStatusChange(event.target.value as IssueStatus)} className="task-input">
+                {ISSUE_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+              </select>
+            </label>
+          )}
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Priority</span>
+            <select value={props.form.priority} onChange={(event) => props.setForm({ ...props.form, priority: event.target.value as MaintenancePriority })} className="task-input">
+              {PRIORITIES.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+            </select>
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Appliance <span className="font-normal muted">(optional)</span></span>
+            <select value={props.form.appliance_id} onChange={(event) => props.setForm({ ...props.form, appliance_id: event.target.value })} className="task-input">
+              <option value="">None</option>
+              {props.appliances.map((item) => <option key={item.appliance_id} value={item.appliance_id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Accountable to <span className="font-normal muted">(optional)</span></span>
+            <select value={props.form.accountable_to} onChange={(event) => props.setForm({ ...props.form, accountable_to: event.target.value })} className="task-input">
+              <option value="">Unassigned</option>
+              {props.members.map((member) => <option key={member.user_id} value={member.user_id}>{member.name} ({member.role})</option>)}
+            </select>
+          </label>
+          <div className="md:col-span-2 flex justify-end">
+            <Button type="submit" disabled={props.isPending}>{props.isPending && <LoaderCircle className="animate-spin" size={16} />}{props.isPending ? 'Saving…' : props.isEditing ? 'Update issue' : 'Report issue'}</Button>
+          </div>
+        </form>
+      )}
+
+      {props.isLoading ? (
+        <div className="flex min-h-32 items-center justify-center gap-2 text-sm muted"><LoaderCircle className="animate-spin" size={18} />Loading issues</div>
+      ) : props.issues.length ? (
+        <div className="mt-4 space-y-3">
+          {props.issues.map((issue) => {
+            const linked = props.applianceName(issue.appliance_id);
+            return (
+              <article key={issue.issue_id} className="flex items-start gap-3 rounded-2xl border border-[var(--line)] p-4 transition hover:bg-[#ECEAE4]/60">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-[var(--ink)]">{issue.description}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs muted">
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${issueTone(issue.status)}`}>{issue.status === 'InProgress' ? 'In progress' : issue.status}</span>
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${priorityTone(issue.priority)}`}>{issue.priority} priority</span>
+                    {linked && <span>· {linked}</span>}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {props.canWrite && (
+                    <button
+                      type="button"
+                      title={`Advance to ${getNextIssueStatus(issue.status)}`}
+                      aria-label={`Advance ${issue.description} to ${getNextIssueStatus(issue.status)}`}
+                      onClick={() => props.onAdvance(issue)}
+                      className="rounded-full border border-[#B9B9B2] px-2.5 py-1 text-xs font-semibold text-[#676B68] transition hover:border-[#5E9278] hover:text-[#284837]"
+                    >
+                      → {getNextIssueStatus(issue.status) === 'InProgress' ? 'In progress' : getNextIssueStatus(issue.status)}
+                    </button>
+                  )}
+                  {props.canWrite && (
+                    <button type="button" aria-label={`Edit issue`} title="Edit issue" onClick={() => props.onEdit(issue)} className="grid size-8 place-items-center rounded-full text-[#676B68] transition hover:bg-[#ECEAE4] hover:text-[#284837]">
+                      <Pencil size={15} />
+                    </button>
+                  )}
+                  {props.canDelete && (
+                    <button type="button" aria-label="Delete issue" title="Delete issue" onClick={() => { if (window.confirm('Delete this issue?')) props.onDelete(issue.issue_id); }} className="grid size-8 place-items-center rounded-full text-[#676B68] transition hover:bg-[#B96359]/10 hover:text-[#8B3F36]">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl bg-[#ECEAE4] p-6 text-sm muted">
+          <p className="font-semibold text-[var(--ink)]">No issues found</p>
+          <p className="mt-1">Report the first maintenance issue so it stays tracked.</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// --- Section 3: Repairs (create + delete only) ---
+
+function RepairsSection(props: {
+  repairs: Repair[];
+  appliances: Appliance[];
+  applianceName: (id: string | null) => string | null;
+  applianceFilter: string;
+  onApplianceFilterChange: (value: string) => void;
+  isLoading: boolean;
+  composerOpen: boolean;
+  form: { serviced_at: string; appliance_id: string; provider: string; costMajor: string; currency: string; notes: string };
+  setForm: (value: { serviced_at: string; appliance_id: string; provider: string; costMajor: string; currency: string; notes: string }) => void;
+  isPending: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onDelete: (id: string) => void;
+}) {
+  const costInvalid = props.form.costMajor.trim() !== '' && costMajorToMinor(props.form.costMajor) === null;
+  return (
+    <Card className="p-5 sm:p-6">
+      <SectionHeading title="Repair history" detail={`${props.repairs.length} records`} />
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="relative">
+          <select
+            aria-label="Filter repairs by appliance"
+            value={props.applianceFilter}
+            onChange={(event) => props.onApplianceFilterChange(event.target.value)}
+            className="task-input appearance-none !w-auto pr-9 text-xs font-semibold"
+          >
+            <option value="">All appliances</option>
+            {props.appliances.map((item) => <option key={item.appliance_id} value={item.appliance_id}>{item.name}</option>)}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#676B68]" size={14} />
+        </span>
+      </div>
+
+      {props.composerOpen && (
+        <form className="mt-4 grid gap-4 rounded-2xl border border-[var(--line)] p-4 md:grid-cols-2" onSubmit={props.onSubmit}>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Serviced on</span>
+            <input type="date" required value={props.form.serviced_at} onChange={(event) => props.setForm({ ...props.form, serviced_at: event.target.value })} className="task-input" />
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Appliance <span className="font-normal muted">(optional)</span></span>
+            <select value={props.form.appliance_id} onChange={(event) => props.setForm({ ...props.form, appliance_id: event.target.value })} className="task-input">
+              <option value="">None</option>
+              {props.appliances.map((item) => <option key={item.appliance_id} value={item.appliance_id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span className="mb-1.5 block text-sm font-semibold">Provider <span className="font-normal muted">(optional)</span></span>
+            <input value={props.form.provider} onChange={(event) => props.setForm({ ...props.form, provider: event.target.value })} className="task-input" placeholder="e.g. CoolCare Services" />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label>
+              <span className="mb-1.5 block text-sm font-semibold">Cost <span className="font-normal muted">(optional)</span></span>
+              <input
+                inputMode="decimal"
+                value={props.form.costMajor}
+                onChange={(event) => props.setForm({ ...props.form, costMajor: event.target.value })}
+                className="task-input"
+                placeholder="e.g. 45.00"
+                aria-invalid={costInvalid}
+              />
+            </label>
+            <label>
+              <span className="mb-1.5 block text-sm font-semibold">Currency</span>
+              <input value={props.form.currency} onChange={(event) => props.setForm({ ...props.form, currency: event.target.value.toUpperCase() })} className="task-input" maxLength={3} placeholder="USD" />
+            </label>
+          </div>
+          {costInvalid && <p className="-mt-2 text-xs font-semibold text-[#8B3F36] md:col-span-2">Enter a valid non-negative amount.</p>}
+          <label className="md:col-span-2">
+            <span className="mb-1.5 block text-sm font-semibold">Notes <span className="font-normal muted">(optional)</span></span>
+            <textarea value={props.form.notes} onChange={(event) => props.setForm({ ...props.form, notes: event.target.value })} className="task-input min-h-20 resize-y py-3" placeholder="What was serviced?" />
+          </label>
+          <div className="md:col-span-2 flex justify-end">
+            <Button type="submit" disabled={props.isPending || costInvalid}>{props.isPending && <LoaderCircle className="animate-spin" size={16} />}{props.isPending ? 'Saving…' : 'Log repair'}</Button>
+          </div>
+        </form>
+      )}
+
+      {props.isLoading ? (
+        <div className="flex min-h-32 items-center justify-center gap-2 text-sm muted"><LoaderCircle className="animate-spin" size={18} />Loading repairs</div>
+      ) : props.repairs.length ? (
+        <div className="mt-4 space-y-3">
+          {props.repairs.map((repair) => {
+            const linked = props.applianceName(repair.appliance_id);
+            return (
+              <article key={repair.repair_id} className="flex items-start gap-3 rounded-2xl border border-[var(--line)] p-4 transition hover:bg-[#ECEAE4]/60">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-[var(--ink)]">
+                    {formatWarrantyDate(repair.serviced_at)}{linked ? ` · ${linked}` : ''}
+                  </p>
+                  {repair.provider && <p className="mt-1 text-xs muted">by {repair.provider}</p>}
+                  {repair.notes && <p className="mt-1 text-sm muted">{repair.notes}</p>}
+                  <p className="mt-2 text-xs font-semibold text-[var(--ink)]">{formatCost(repair.cost_minor, repair.currency)}</p>
+                </div>
+                <button type="button" aria-label="Delete repair record" title="Delete repair record" onClick={() => { if (window.confirm('Delete this repair record?')) props.onDelete(repair.repair_id); }} className="grid size-8 shrink-0 place-items-center rounded-full text-[#676B68] transition hover:bg-[#B96359]/10 hover:text-[#8B3F36]">
+                  <Trash2 size={15} />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl bg-[#ECEAE4] p-6 text-sm muted">
+          <p className="font-semibold text-[var(--ink)]">No repairs logged</p>
+          <p className="mt-1">Log the first service to build a maintenance history.</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Metric({ value, label, wide = false }: { value: string | number; label: string; wide?: boolean }) {
+  return (
+    <div className={`rounded-xl bg-[#ECEAE4] p-4 ${wide ? 'col-span-2' : ''}`}>
+      <p className="truncate text-2xl font-bold">{value}</p>
+      <p className="mt-1 text-xs muted">{label}</p>
+    </div>
+  );
+}
