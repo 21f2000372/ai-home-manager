@@ -5,11 +5,13 @@ import { Card } from '@/components/design-system/card';
 import { Badge, type BadgeTone } from '@/components/design-system/badge';
 import { Progress } from '@/components/design-system/progress';
 import { SectionHeading } from '@/components/design-system/section-heading';
-import { documents, events, expenses, inventoryAlerts, maintenanceIssues, members, tasks } from '@/data/homeops-fixtures';
+import { documents, events, expenses, inventoryAlerts, members, tasks } from '@/data/homeops-fixtures';
 import { PeoplePermissionsWorkspace } from '@/features/people-permissions/people-permissions-workspace';
 import { GroceryWorkspace, InventoryWorkspace } from '@/features/inventory/inventory-workspace';
+import { FinanceWorkspace as LiveFinanceWorkspace } from '@/features/finance/finance-workspace';
 import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
 import { CalendarWorkspace } from '@/features/calendar-schedule';
+import { MaintenanceWorkspace } from '@/features/maintenance';
 import { sendAgentMessage, type PlannedAction } from '@/features/conversation/agent-api';
 import { ApiError } from '@/lib/api/request';
 
@@ -43,6 +45,7 @@ export function DomainWorkspace({ kind }: { kind: WorkspaceKind }) {
   if (kind === 'people') return <PeoplePermissionsWorkspace />;
   if (kind === 'inventory') return <InventoryWorkspace />;
   if (kind === 'grocery') return <GroceryWorkspace />;
+  if (kind === 'finance') return <LiveFinanceWorkspace />;
   const meta = pageMeta[kind];
   const Icon = meta.icon;
   return <section className="space-y-6"><div className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end"><div><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#ee7b4b]"><Icon size={14} />{meta.eyebrow}</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--ink)] sm:text-4xl">{kind === 'chat' ? 'AI assistant' : kind[0].toUpperCase() + kind.slice(1)}</h1><p className="mt-2 max-w-xl text-sm leading-6 muted">{meta.description}</p></div><Button><Plus size={16} />{actionLabels[kind]}</Button></div>{renderWorkspace(kind)}</section>;
@@ -78,10 +81,6 @@ function FixtureInventoryWorkspace({ showGrocery }: { showGrocery: boolean }) {
 
 function FinanceWorkspace() {
   return <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]"><Card className="p-6"><SectionHeading title="Weekly budget" detail="A clear view of planned and available spend." action={<Badge tone="ready">₹2,400 buffer</Badge>} /><div className="mt-7"><div className="flex items-end justify-between"><p className="font-display text-4xl font-semibold text-[var(--ink)]">₹5,000</p><p className="text-sm muted">of ₹5,000 planned</p></div><div className="mt-4"><Progress label="Planned spend" value={52} /></div></div><div className="mt-7 grid gap-3 sm:grid-cols-3"><Stat label="Planned" value="₹2,600" /><Stat label="Spent" value="₹1,050" /><Stat label="Remaining" value="₹2,400" /></div></Card><Card className="p-6"><SectionHeading title="Recent expenses" detail="Latest household activity" /><div className="mt-5 space-y-3">{expenses.map((expense) => <div key={expense.id} className="flex items-center justify-between gap-3 border-b border-[var(--line)] pb-3 last:border-0"><div><p className="text-sm font-semibold text-[var(--ink)]">{expense.title}</p><p className="mt-1 text-xs muted">{expense.category} · {expense.date}</p></div><span className="text-sm font-semibold text-[var(--ink)]">{expense.amount}</span></div>)}</div></Card></div>;
-}
-
-function MaintenanceWorkspace() {
-  return <div className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]"><Card className="p-6"><SectionHeading title="Service status" detail="Appliances and repair history" action={<Badge tone="attention">1 needs service</Badge>} /><div className="mt-6 space-y-3">{maintenanceIssues.map((issue) => <div key={issue.id} className="flex items-start gap-3 rounded-xl bg-[var(--surface-muted)] p-4"><Wrench size={18} className="mt-0.5 text-[#ee7b4b]" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-[var(--ink)]">{issue.title}</p><p className="mt-1 text-xs muted">{issue.location} · {issue.due}</p></div><Badge tone={issue.status as BadgeTone}>{issue.status}</Badge></div>)}</div></Card><Card className="p-6"><SectionHeading title="Maintenance rhythm" detail="Keep recurring work visible." /><div className="mt-6 space-y-4"><div className="rounded-xl bg-[#fff0e9] p-4"><p className="text-sm font-semibold text-[#c2603c]">Guest room AC filter</p><p className="mt-1 text-xs text-[#8d4b35]">Schedule a service before guests arrive Saturday.</p></div><Button>Log a repair</Button></div></Card></div>;
 }
 
 function DocumentsWorkspace() {
