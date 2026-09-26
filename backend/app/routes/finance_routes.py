@@ -12,6 +12,20 @@ from app.services.finance import FinanceService
 finance_bp = Blueprint("finance", __name__, url_prefix="/api/finance")
 
 
+def _parse_iso(value):
+    """Parse an ISO datetime string, tolerating a trailing 'Z' (UTC).
+
+    Python 3.9's datetime.fromisoformat does not accept the 'Z' suffix that
+    JavaScript's toISOString() produces, so normalize it to '+00:00' first.
+    Returns None for empty values.
+    """
+    if not value:
+        return None
+    if isinstance(value, str) and value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.fromisoformat(value)
+
+
 # -----------------------------------------------------------------------------
 # RBAC Enforcement Guard (US-4.4, US-1.6, US-1.7)
 # -----------------------------------------------------------------------------
@@ -123,11 +137,7 @@ def log_expense():
     if amount_minor is None or not category:
         return jsonify({"error": "amount_minor and category are required"}), 400
 
-    occurred_at = (
-        datetime.fromisoformat(data["occurred_at"])
-        if data.get("occurred_at")
-        else None
-    )
+    occurred_at = _parse_iso(data.get("occurred_at"))
 
     session = SessionLocal()
     try:
@@ -158,11 +168,7 @@ def log_expense():
 def update_expense(expense_id: str):
     """Edit an existing expense."""
     data = request.get_json() or {}
-    occurred_at = (
-        datetime.fromisoformat(data["occurred_at"])
-        if data.get("occurred_at")
-        else None
-    )
+    occurred_at = _parse_iso(data.get("occurred_at"))
 
     session = SessionLocal()
     try:
@@ -357,7 +363,7 @@ def create_bill():
         return jsonify({"error": "payee, expected_amount_minor, and due_at are required"}), 400
 
     try:
-        due_at = datetime.fromisoformat(due_at_raw)
+        due_at = _parse_iso(due_at_raw)
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid ISO format for due_at"}), 400
 
@@ -389,7 +395,7 @@ def create_bill():
 def update_bill(bill_id: str):
     """Edit a recurring bill (Admin only)."""
     data = request.get_json() or {}
-    due_at = datetime.fromisoformat(data["due_at"]) if data.get("due_at") else None
+    due_at = _parse_iso(data.get("due_at"))
 
     session = SessionLocal()
     try:

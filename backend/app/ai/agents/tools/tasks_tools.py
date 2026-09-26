@@ -39,6 +39,62 @@ def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
         )
 
 
+def _resolve_assignee(session, assignee: str) -> Optional[str]:
+    """Resolve a task assignee (a name or user_id) to a household user_id.
+
+    Returns None when no assignee is given. Accepts either an existing
+    user_id or a member's display name (case-insensitive, and tolerant of
+    extra text like a role suffix, e.g. "Meera" matches "Meera (Adult)").
+    Raises ValueError with a clear message when the name matches no active
+    member or is ambiguous.
+    """
+    assignee = (assignee or "").strip()
+    if not assignee:
+        return None
+
+    # 1. Exact user_id match against an active member.
+    exact = (
+        session.query(User)
+        .join(Membership, Membership.user_id == User.user_id)
+        .filter(
+            User.user_id == assignee,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+        .first()
+    )
+    if exact:
+        return exact.user_id
+
+    # 2. Match by display name among active members (forgiving).
+    needle = assignee.lower()
+    active_members = (
+        session.query(User)
+        .join(Membership, Membership.user_id == User.user_id)
+        .filter(Membership.status == MembershipStatus.ACTIVE)
+        .all()
+    )
+
+    matches = [
+        user
+        for user in active_members
+        if user.display_name and needle in user.display_name.lower()
+    ]
+
+    if len(matches) == 1:
+        return matches[0].user_id
+
+    if len(matches) > 1:
+        names = ", ".join(user.display_name for user in matches)
+        raise ValueError(
+            f"'{assignee}' matches more than one household member "
+            f"({names}). Please be more specific."
+        )
+
+    raise ValueError(
+        f"No active household member matches '{assignee}'."
+    )
+
+
 # ============================================================
 # TASK CRUD
 # ============================================================
