@@ -65,6 +65,11 @@ class TaskService:
         return query.order_by(Task.due_at.asc().nullslast()).all()
 
     @staticmethod
+    def get_task(session: Session, task_id: str) -> Optional[Task]:
+        """Fetch a single task by id, or None if it does not exist."""
+        return session.query(Task).filter(Task.task_id == task_id).first()
+
+    @staticmethod
     def update_task_status(
         session: Session,
         task_id: str,

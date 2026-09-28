@@ -40,7 +40,7 @@ export function createTask(input: CreateTaskInput) {
 
 export function updateTask(taskId: string, input: CreateTaskInput) {
   return request<HouseholdTask>(`/api/tasks/${taskId}`, {
-    method: 'PATCH',
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...input,

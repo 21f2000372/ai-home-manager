@@ -12,6 +12,20 @@ from app.services.tasks import CalendarService, TaskService
 task_bp = Blueprint("tasks", __name__, url_prefix="/api")
 
 
+def _parse_iso(value):
+    """Parse an ISO datetime string, tolerating a trailing 'Z' (UTC).
+
+    Python 3.9's datetime.fromisoformat does not accept the 'Z' suffix that
+    JavaScript's toISOString() produces, so normalize it to '+00:00' first.
+    Returns None for empty values.
+    """
+    if not value:
+        return None
+    if isinstance(value, str) and value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.fromisoformat(value)
+
+
 @task_bp.route("/tasks", methods=["GET"])
 @login_required
 def get_tasks():
@@ -53,7 +67,7 @@ def create_task():
     if not title:
         return jsonify({"error": "Title is required"}), 400
 
-    due_at = datetime.fromisoformat(data["due_at"]) if data.get("due_at") else None
+    due_at = _parse_iso(data.get("due_at"))
     priority = Priority(data.get("priority", Priority.NORMAL.value))
 
     session = SessionLocal()
@@ -81,10 +95,12 @@ def create_task():
 @task_bp.route("/tasks/<string:task_id>/status", methods=["PATCH"])
 @login_required
 def update_task_status(task_id: str):
-    """Update task lifecycle state."""
-    if g.current_role == HouseholdRole.GUEST:
-        return jsonify({"error": "Guest accounts have read-only access"}), 403
+    """Update task lifecycle state.
 
+    A Guest may respond ONLY to a task assigned to them, and only by
+    accepting (InProgress) or rejecting (Cancelled) it. This backs the guest
+    notification dashboard without granting broader write access.
+    """
     data = request.get_json() or {}
     status_str = data.get("status")
     try:
@@ -94,6 +110,16 @@ def update_task_status(task_id: str):
 
     session = SessionLocal()
     try:
+        if g.current_role == HouseholdRole.GUEST:
+            # Guests can only accept/reject their own assigned notifications.
+            task = TaskService.get_task(session, task_id)
+            if task is None:
+                return jsonify({"error": "Task not found"}), 404
+            if task.assigned_to != g.current_user.user_id:
+                return jsonify({"error": "Guest accounts can only respond to their own tasks"}), 403
+            if new_status not in (TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED):
+                return jsonify({"error": "Guests may only accept or reject a task"}), 403
+
         task = TaskService.update_task_status(session, task_id, new_status)
         return jsonify({"task_id": task.task_id, "status": task.status.value}), 200
     except ValueError as e:
@@ -115,7 +141,7 @@ def update_task(task_id: str):
         return jsonify({"error": "Title is required"}), 400
 
     try:
-        due_at = datetime.fromisoformat(data["due_at"]) if data.get("due_at") else None
+        due_at = _parse_iso(data.get("due_at"))
         priority = Priority(data.get("priority", Priority.NORMAL.value))
     except (TypeError, ValueError):
         return jsonify({"error": "Valid due_at and priority are required"}), 400
@@ -198,8 +224,8 @@ def create_calendar_event():
     if not all([title, starts_at_raw, ends_at_raw]):
         return jsonify({"error": "title, starts_at, and ends_at are required"}), 400
 
-    starts_at = datetime.fromisoformat(starts_at_raw)
-    ends_at = datetime.fromisoformat(ends_at_raw)
+    starts_at = _parse_iso(starts_at_raw)
+    ends_at = _parse_iso(ends_at_raw)
 
     session = SessionLocal()
     try:
@@ -241,8 +267,8 @@ def update_calendar_event(event_id: str):
         return jsonify({"error": "Guest accounts have read-only access"}), 403
 
     data = request.get_json() or {}
-    starts_at = datetime.fromisoformat(data["starts_at"]) if data.get("starts_at") else None
-    ends_at = datetime.fromisoformat(data["ends_at"]) if data.get("ends_at") else None
+    starts_at = _parse_iso(data.get("starts_at"))
+    ends_at = _parse_iso(data.get("ends_at"))
 
     session = SessionLocal()
     try:
