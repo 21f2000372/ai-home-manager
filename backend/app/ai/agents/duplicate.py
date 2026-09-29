@@ -1,26 +1,27 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any, Dict, Optional, Tuple
 
 from app.ai.agents.state import AgentState
 from app.db.base import SessionLocal
 from app.models.inventory import GroceryItem, InventoryItem
 
 
-def _normalize(value: str | None) -> str:
-    """
-    Normalize names/units for deterministic comparison.
+DuplicateCheckResult = Tuple[
+    str,
+    Optional[str],
+    Optional[Dict[str, Any]],
+]
 
-    Examples:
-        " Apples " -> "apples"
-        "RED   Apples" -> "red apples"
-    """
+
+def _normalize(value: Optional[str]) -> str:
     return " ".join(
         (value or "").casefold().strip().split()
     )
 
 
-def _number(value) -> Decimal | None:
+def _number(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
 
@@ -31,23 +32,14 @@ def _number(value) -> Decimal | None:
 
 
 def _check_grocery(
-    args: dict,
-) -> tuple[str, str | None]:
-    """
-    Check whether an active grocery item with the same name exists.
-
-    Returns:
-        ("NEW", None)
-        ("DUPLICATE", details)
-        ("CONFLICT", details)
-    """
-
+    args: Dict[str, Any],
+) -> DuplicateCheckResult:
     requested_name = _normalize(
         args.get("name")
     )
 
     if not requested_name:
-        return "NEW", None
+        return "NEW", None, None
 
     session = SessionLocal()
 
@@ -67,7 +59,7 @@ def _check_grocery(
         ]
 
         if not matches:
-            return "NEW", None
+            return "NEW", None, None
 
         existing = matches[0]
 
@@ -91,37 +83,59 @@ def _check_grocery(
         )
 
         existing_quantity_text = (
-            f"{existing.quantity}"
-            f"{(' ' + existing.unit) if existing.unit else ''}"
+            "{0}{1}".format(
+                existing.quantity,
+                (" " + existing.unit) if existing.unit else "",
+            )
         )
 
         requested_quantity_text = (
-            f"{args.get('quantity', 1)}"
-            f"{(' ' + str(args.get('unit'))) if args.get('unit') else ''}"
+            "{0}{1}".format(
+                args.get("quantity", 1),
+                (" " + str(args.get("unit"))) if args.get("unit") else "",
+            )
         )
+
+        match = {
+            "domain": "food",
+            "record_type": "grocery_item",
+            "record_id": str(existing.grocery_item_id),
+            "record_id_arg": "grocery_item_id",
+            "update_tool": "update_grocery_item",
+            "name": existing.name,
+            "quantity": (
+                float(existing.quantity)
+                if existing.quantity is not None
+                else None
+            ),
+            "unit": existing.unit,
+        }
 
         if exact_match:
             return (
                 "DUPLICATE",
                 (
-                    f"'{existing.name}' is already on the "
-                    f"active grocery list with quantity "
-                    f"{existing_quantity_text} "
-                    f"(id={existing.grocery_item_id})."
+                    "'{0}' is already on the active grocery list with "
+                    "quantity {1}."
+                ).format(
+                    existing.name,
+                    existing_quantity_text,
                 ),
+                match,
             )
 
         return (
             "CONFLICT",
             (
-                f"'{existing.name}' is already on the "
-                f"active grocery list as "
-                f"{existing_quantity_text} "
-                f"(id={existing.grocery_item_id}), "
-                f"while the new request is "
-                f"{requested_quantity_text} "
-                f"{args.get('name')}."
+                "'{0}' is already on the active grocery list as {1}, "
+                "while the revised request is {2} {3}."
+            ).format(
+                existing.name,
+                existing_quantity_text,
+                requested_quantity_text,
+                args.get("name"),
             ),
+            match,
         )
 
     finally:
@@ -129,14 +143,14 @@ def _check_grocery(
 
 
 def _check_inventory(
-    args: dict,
-) -> tuple[str, str | None]:
+    args: Dict[str, Any],
+) -> DuplicateCheckResult:
     requested_name = _normalize(
         args.get("name")
     )
 
     if not requested_name:
-        return "NEW", None
+        return "NEW", None, None
 
     session = SessionLocal()
 
@@ -152,7 +166,7 @@ def _check_inventory(
         ]
 
         if not matches:
-            return "NEW", None
+            return "NEW", None, None
 
         existing = matches[0]
 
@@ -182,14 +196,29 @@ def _check_inventory(
         )
 
         details = (
-            f"'{existing.name}' already exists in "
-            f"inventory with quantity "
-            f"{existing.quantity}"
-            f"{(' ' + existing.unit) if existing.unit else ''} "
-            f"(id={existing.item_id})."
+            "'{0}' already exists in inventory with quantity {1}{2}."
+        ).format(
+            existing.name,
+            existing.quantity,
+            (" " + existing.unit) if existing.unit else "",
         )
 
-        return status, details
+        match = {
+            "domain": "food",
+            "record_type": "inventory_item",
+            "record_id": str(existing.item_id),
+            "record_id_arg": "item_id",
+            "update_tool": "update_inventory_item",
+            "name": existing.name,
+            "quantity": (
+                float(existing.quantity)
+                if existing.quantity is not None
+                else None
+            ),
+            "unit": existing.unit,
+        }
+
+        return status, details, match
 
     finally:
         session.close()
@@ -203,69 +232,75 @@ DUPLICATE_CHECKERS = {
 
 def duplicate_check_node(
     state: AgentState,
-) -> dict:
-    """
-    Runs after Specialist chooses a tool, but before authorization
-    and execution.
+) -> Dict[str, Any]:
+    """Run duplicate checks and preserve the matched record structurally.
 
-    Only tools registered in DUPLICATE_CHECKERS are checked.
-    All other tools continue normally.
+    ``duplicate_match`` is intentionally server-derived.  It allows a later
+    explicit user resolution such as "update it to 3 kg" to target the exact
+    existing row without asking the model to recover a database id from prose.
     """
 
-    call = state.get(
-        "pending_tool_call"
+    call = state.get("pending_tool_call")
+    force_review = bool(
+        state.get("force_action_review")
     )
 
     if not call:
         return {
             "duplicate_status": "NEW",
             "duplicate_details": None,
+            "duplicate_match": None,
             "awaiting_confirmation": False,
         }
 
-    tool_name = call.get(
-        "name",
-        "",
+    tool_name = call.get("name", "")
+    checker = DUPLICATE_CHECKERS.get(tool_name)
+
+    status = "NEW"
+    details = None
+    match = None
+
+    if checker is not None:
+        status, details, match = checker(
+            call.get("args", {})
+        )
+
+    needs_confirmation = (
+        status in {"DUPLICATE", "CONFLICT"}
+        or force_review
     )
 
-    checker = DUPLICATE_CHECKERS.get(
-        tool_name
-    )
+    if status == "DUPLICATE":
+        confirmation_kind = "duplicate"
+    elif status == "CONFLICT":
+        confirmation_kind = "conflict"
+    else:
+        confirmation_kind = "action"
 
-    if checker is None:
-        return {
-            "duplicate_status": "NEW",
-            "duplicate_details": None,
-            "awaiting_confirmation": False,
-        }
-
-    status, details = checker(
-        call.get("args", {})
-    )
+    if force_review and not details:
+        details = (
+            "You edited the pending action. The revised action must be "
+            "reviewed again before it can execute."
+        )
 
     return {
         "duplicate_status": status,
         "duplicate_details": details,
-        "awaiting_confirmation": (
-            status in {
-                "DUPLICATE",
-                "CONFLICT",
-            }
-        ),
+        "duplicate_match": match,
+        "confirmation_kind": confirmation_kind,
+        "awaiting_confirmation": needs_confirmation,
     }
 
 
 def route_after_duplicate(
     state: AgentState,
 ) -> str:
-    status = state.get(
-        "duplicate_status"
-    )
+    status = state.get("duplicate_status")
 
-    if status in {
-        "DUPLICATE",
-        "CONFLICT",
-    }:
+    if (
+        status in {"DUPLICATE", "CONFLICT"}
+        or state.get("force_action_review")
+    ):
         return "request_confirmation"
 
     return "authorize"

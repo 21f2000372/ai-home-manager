@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import json
+from typing import List, Literal
+
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from app.ai.agents.llm import get_llm
 from app.ai.agents.state import AgentState
-from typing import Literal
+
 
 class PlannedActionModel(BaseModel):
     domain: Literal[
@@ -29,136 +32,123 @@ class PlannedActionModel(BaseModel):
 
 
 class PlanModel(BaseModel):
-    actions: list[PlannedActionModel]
+    actions: List[PlannedActionModel]
 
 
 _PLANNER_PROMPT = """
 You are the planning component of a household management assistant.
 Break the user's CURRENT request into independent actions.
+
 Available domains:
-- finance:
-  expenses, payments, advances already paid, budgets, bills, spending
-- tasks:
-  to-dos, chores, reminders, scheduled activities, task management
-- food:
-  groceries, grocery lists, food inventory
-- maintenance:
-  appliances, household problems, maintenance issues, repairs
-- documents:
-  uploaded document metadata, receipts, bills, warranties,
+- finance: expenses, payments, advances already paid, budgets, bills, spending
+- tasks: to-dos, chores, reminders, scheduled activities, task management
+- food: groceries, grocery lists, food inventory
+- maintenance: appliances, household problems, maintenance issues, repairs
+- documents: uploaded document metadata, receipts, bills, warranties,
   document records
-- general:
-  questions or requests that do not require a household action
-The user may be continuing a previous conversation.
-Relevant context from previous interactions may be provided below.
-Use that context ONLY to resolve references such as:
-- "it"
-- "that"
-- "them"
-- "those"
-- "the previous one"
-- "make it two"
-- "change its quantity"
-- "remove it"
-- "delete that"
-Do NOT treat previous context as a new user request.
-The CURRENT user message always takes priority.
-Rules:
+- general: questions or requests that do not require a household action
+
+The user may be continuing a previous conversation. Relevant context from
+previous interactions may be provided below. Use that context ONLY to resolve
+references such as "it", "that", "them", "the previous one", "make it two",
+"change its quantity", "remove it", or "delete that". Do NOT treat previous
+context as a new user request. The CURRENT user message always takes priority.
+
+EDITING A PENDING ACTION
+If a PENDING ACTION UNDER REVIEW is supplied, the current request is an edit to
+that exact pending action. In that case:
+1. Return exactly ONE revised action for the pending action.
+2. Apply only the changes explicitly requested by the user.
+3. Preserve every material value/reference that the user did not change,
+   including stable entity ids, amounts, dates, quantities, units, assignees,
+   and the operation's original purpose.
+4. Do not create a second action merely because the user phrased the edit as
+   "change", "make it", "instead", "assign", or "move".
+5. Do not execute anything. The revised action must go back through specialist,
+   consistency checks, and review.
+6. If the requested edit is ambiguous, return a general action explaining what
+   needs clarification rather than guessing.
+
+General rules:
 1. Identify EVERY distinct action requested by the CURRENT user.
-2. A single user message may contain multiple actions.
+2. A single user message may contain multiple actions, except while editing a
+   pending action, where exactly one revised action must be returned.
 3. Each action must have exactly ONE domain.
-4. Never return values such as "maintenance/tasks".
+4. Never return combined domains such as "maintenance/tasks".
 5. Use the user's INTENT, not merely the object mentioned.
 6. Do not invent actions.
 7. An already-paid advance is a finance action.
-8. Creating a budget is a finance action ONLY when the user explicitly
-   requests a budget or spending limit.
+8. Creating a budget is a finance action ONLY when explicitly requested.
 9. Preserve amounts, dates, items and descriptions.
-10. If the current request modifies, deletes, completes, or otherwise
-    acts on an existing item mentioned in previous context, preserve
-    the identity/reference needed by the specialist.
+10. If the current request modifies/deletes/completes an existing item from
+    context, preserve the identity/reference needed by the specialist.
 11. Do not reinterpret a previous completed action as a new action.
-12. If a reference cannot be resolved reliably from the available
-    context, classify the request as general and explain the ambiguity
-    in the action description rather than inventing an entity.
+12. If a reference cannot be resolved reliably, classify as general and
+    explain the ambiguity rather than inventing an entity.
+
 Reminder rules:
-13. A request beginning with or containing "remind me", "remind mom",
-    "remind [person]", "set a reminder", or equivalent is a tasks action.
-14. "Remind me to X" should create a task with X as the task title
-    and a reminder time.
-15. "Remind [person] to/about X" should create a task with the
-    specified household member as assigned_to when that identity can
-    be resolved.
-16. Relative time expressions such as "tomorrow", "this Saturday",
-    "in 2 hours", "in the morning", and "tomorrow evening" must be
-    preserved in the action description for the specialist to resolve.
-17. Do not classify a reminder as a calendar event unless the user
-    explicitly requests an event/calendar appointment.
+13. "remind me", "remind [person]", "set a reminder" and equivalents are tasks.
+14. "Remind me to X" should create a task with X as the title and reminder time.
+15. "Remind [person] to/about X" should use the resolved household member.
+16. Preserve relative times such as tomorrow, Saturday, or in two hours.
+17. Do not classify reminders as calendar events unless explicitly requested.
+
 Inventory rules:
-18. "Add X to inventory" means add an existing/stocked household item
-    using add_inventory_item.
-19. "Add X to the grocery list" means add a shopping-list item using
-    add_grocery_item.
+18. "Add X to inventory" means add a stocked household item.
+19. "Add X to the grocery list" means add a shopping-list item.
 20. Never substitute a grocery action for an inventory action.
+
 Documents:
-21. Requests to create, view, update, or delete document metadata belong
-    to the documents domain.
-Grocery examples:
-Previous context:
-"Add bananas to the grocery list."
-Assistant:
-"Added 1 bananas to the grocery list. Grocery item id: abc123"
-Current user:
-"Make it a dozen."
-Correct action:
-domain = food
-intent = Update existing grocery item quantity
-description = Update grocery item abc123 (bananas) to quantity 12.
-Current user:
-"Remove them."
-Correct action:
-domain = food
-intent = Delete existing grocery item
-description = Delete grocery item abc123 (bananas).
-Current user:
-"Add apples too."
-Correct action:
-domain = food
-intent = Add grocery item
-description = Add apples to the grocery list.
-Important:
-"Add apples too" creates a NEW action.
-"Make it a dozen" modifies the EXISTING referenced item.
-Example:
-User:
-"Schedule an AC repair for Saturday and log the ₹500 advance I paid."
-Actions:
-1. domain = tasks
-   Schedule/create a household task for the AC repair on Saturday.
-2. domain = finance
-   Record the ₹500 advance that has already been paid.
+21. Requests to create/view/update/delete document metadata are documents.
+
 Return only the structured plan.
 """
 
 
+def _safe_json(value) -> str:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    except Exception:
+        return "(unavailable)"
+
+
 def planner_node(state: AgentState) -> dict:
     llm = get_llm(temperature=0.0)
-
     structured_llm = llm.with_structured_output(PlanModel)
 
     context = "\n".join(
         state.get("retrieved_context") or []
     ) or "(none)"
 
-    user_message = f"""
+    edit_context = state.get("pending_edit_context")
+    edit_block = (
+        _safe_json(edit_context)
+        if edit_context
+        else "(none)"
+    )
+
+    user_message = """
 Relevant context from previous interactions:
 
 {context}
 
+PENDING ACTION UNDER REVIEW:
+
+{edit_block}
+
 CURRENT USER REQUEST:
 
-{state["message"]}
-"""
+{message}
+""".format(
+        context=context,
+        edit_block=edit_block,
+        message=state.get("message", ""),
+    )
 
     result = structured_llm.invoke(
         [

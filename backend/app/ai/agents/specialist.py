@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.ai.agents.llm import get_llm
@@ -117,6 +119,19 @@ Maintenance rules:
 - Use actual priority values:
   Low, Normal, High.
 
+Editing a pending action:
+
+- If PENDING ACTION UNDER REVIEW is present, this turn is revising that action.
+- Preserve all original arguments the user did not explicitly change.
+- Keep stable entity references/ids from the restored server-side edit context.
+- Generate a COMPLETE revised tool call; do not emit a partial patch unless the
+  selected tool itself is an update tool whose contract is intentionally partial.
+- Never execute or reuse the old pending tool call directly.
+- The revised action must be reviewed again before execution.
+
+PENDING ACTION UNDER REVIEW:
+{edit_context}
+
 Tool rules:
 
 - Use only tools available for the current domain.
@@ -160,6 +175,16 @@ def specialist_node(state: AgentState) -> dict:
     context = "\n".join(
         state.get("retrieved_context") or []
     ) or "(none)"
+
+    try:
+        edit_context = json.dumps(
+            state.get("pending_edit_context") or None,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    except Exception:
+        edit_context = "(unavailable)"
 
     iteration = state.get("iteration", 0) + 1
     max_iterations = state.get(
@@ -217,6 +242,7 @@ def specialist_node(state: AgentState) -> dict:
             intent=intent,
             description=description,
             context=context,
+            edit_context=edit_context,
             current_datetime=state.get(
                 "current_datetime",
                 "",

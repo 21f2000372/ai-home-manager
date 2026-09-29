@@ -293,6 +293,32 @@ def are_visual_near_duplicates(
 
 
 # =========================================================
+# Database duplicate lookup policy
+# =========================================================
+
+
+ACTIVE_PENDING_DUPLICATE_STATUSES = (
+    "staged",
+    "needs_review",
+    "archived_pending_actions",
+)
+
+APPROVED_DOCUMENT_STATUS = "approved"
+
+
+def _safe_duplicate_result(
+    match_type: str,
+    source: str,
+) -> dict:
+    """Return duplicate information safe for propagation through ingestion."""
+
+    return {
+        "match_type": match_type,
+        "source": source,
+    }
+
+
+# =========================================================
 # Database exact duplicate lookup
 # =========================================================
 
@@ -300,75 +326,42 @@ def are_visual_near_duplicates(
 def find_exact_duplicate(
     session: Session,
     sha256_hash: str,
+    uploaded_by: Optional[str] = None,
 ) -> Optional[dict]:
-    """
-    Search permanent and pending documents for an exact
-    byte-for-byte duplicate.
-
-    Returns duplicate metadata or None.
-    """
+    """Search approved documents and this user's active pending uploads."""
 
     if not sha256_hash:
         return None
 
-    # -----------------------------------------------------
-    # Permanent documents
-    # -----------------------------------------------------
-
     document = (
-        session.query(
-            Document
-        )
+        session.query(Document)
         .filter(
-            Document.sha256
-            == sha256_hash
+            Document.sha256 == sha256_hash,
+            Document.status == APPROVED_DOCUMENT_STATUS,
         )
         .first()
     )
 
     if document is not None:
+        return _safe_duplicate_result("exact", "document")
 
-        return {
-            "match_type": "exact",
-            "source": "document",
-            "record_id": (
-                document.document_id
-            ),
-            "original_filename": (
-                document.original_filename
-            ),
-        }
-
-    # -----------------------------------------------------
-    # Pending documents
-    # -----------------------------------------------------
+    if not uploaded_by:
+        return None
 
     pending = (
-        session.query(
-            PendingDocumentUpload
-        )
+        session.query(PendingDocumentUpload)
         .filter(
-            PendingDocumentUpload.sha256
-            == sha256_hash
+            PendingDocumentUpload.sha256 == sha256_hash,
+            PendingDocumentUpload.uploaded_by == str(uploaded_by),
+            PendingDocumentUpload.status.in_(
+                ACTIVE_PENDING_DUPLICATE_STATUSES
+            ),
         )
         .first()
     )
 
     if pending is not None:
-
-        return {
-            "match_type": "exact",
-            "source": "pending",
-            "record_id": (
-                pending.pending_id
-            ),
-            "upload_id": (
-                pending.upload_id
-            ),
-            "original_filename": (
-                pending.original_filename
-            ),
-        }
+        return _safe_duplicate_result("exact", "pending")
 
     return None
 
@@ -381,76 +374,43 @@ def find_exact_duplicate(
 def find_text_duplicate(
     session: Session,
     normalized_text_hash: str,
+    uploaded_by: Optional[str] = None,
 ) -> Optional[dict]:
-    """
-    Search permanent and pending documents for identical
-    normalized OCR / extracted text.
-
-    Exact normalized-text matches can be treated as actual
-    duplicates.
-    """
+    """Return an identical-text signal; callers must treat it as review-only."""
 
     if not normalized_text_hash:
         return None
 
-    # -----------------------------------------------------
-    # Permanent documents
-    # -----------------------------------------------------
-
     document = (
-        session.query(
-            Document
-        )
+        session.query(Document)
         .filter(
-            Document.normalized_text_hash
-            == normalized_text_hash
+            Document.normalized_text_hash == normalized_text_hash,
+            Document.status == APPROVED_DOCUMENT_STATUS,
         )
         .first()
     )
 
     if document is not None:
+        return _safe_duplicate_result("text", "document")
 
-        return {
-            "match_type": "text",
-            "source": "document",
-            "record_id": (
-                document.document_id
-            ),
-            "original_filename": (
-                document.original_filename
-            ),
-        }
-
-    # -----------------------------------------------------
-    # Pending documents
-    # -----------------------------------------------------
+    if not uploaded_by:
+        return None
 
     pending = (
-        session.query(
-            PendingDocumentUpload
-        )
+        session.query(PendingDocumentUpload)
         .filter(
             PendingDocumentUpload.normalized_text_hash
-            == normalized_text_hash
+            == normalized_text_hash,
+            PendingDocumentUpload.uploaded_by == str(uploaded_by),
+            PendingDocumentUpload.status.in_(
+                ACTIVE_PENDING_DUPLICATE_STATUSES
+            ),
         )
         .first()
     )
 
     if pending is not None:
-
-        return {
-            "match_type": "text",
-            "source": "pending",
-            "record_id": (
-                pending.pending_id
-            ),
-            "upload_id": (
-                pending.upload_id
-            ),
-            "original_filename": (
-                pending.original_filename
-            ),
-        }
+        return _safe_duplicate_result("text", "pending")
 
     return None
 
@@ -463,20 +423,13 @@ def find_text_duplicate(
 def _parse_visual_hashes(
     value: Optional[str],
 ) -> List[str]:
-    """
-    Decode visual hashes stored as JSON.
-
-    Invalid values safely return an empty list.
-    """
+    """Decode visual hashes stored as JSON."""
 
     if not value:
         return []
 
     try:
-        parsed = json.loads(
-            value
-        )
-
+        parsed = json.loads(value)
     except (
         TypeError,
         ValueError,
@@ -484,25 +437,14 @@ def _parse_visual_hashes(
     ):
         return []
 
-    if not isinstance(
-        parsed,
-        list,
-    ):
+    if not isinstance(parsed, list):
         return []
 
-    hashes: List[str] = []
-
-    for item in parsed:
-
-        if isinstance(
-            item,
-            str,
-        ):
-            hashes.append(
-                item
-            )
-
-    return hashes
+    return [
+        item
+        for item in parsed
+        if isinstance(item, str)
+    ]
 
 
 # =========================================================
@@ -514,110 +456,63 @@ def find_visual_near_duplicate(
     session: Session,
     visual_hashes: List[str],
     threshold: int = 6,
+    uploaded_by: Optional[str] = None,
 ) -> Optional[dict]:
-    """
-    Search permanent and pending documents for a visually
-    similar document.
-
-    IMPORTANT:
-
-    A visual match is only a warning.
-
-    It must not automatically reject the new document because
-    different invoices from the same vendor can have extremely
-    similar layouts.
-    """
+    """Return a visual-similarity signal; it is never proof of duplication."""
 
     if not visual_hashes:
         return None
 
-    # -----------------------------------------------------
-    # Permanent documents
-    # -----------------------------------------------------
-
     documents = (
-        session.query(
-            Document
-        )
+        session.query(Document)
         .filter(
-            Document.visual_hashes_json.isnot(
-                None
-            )
+            Document.visual_hashes_json.isnot(None),
+            Document.status == APPROVED_DOCUMENT_STATUS,
         )
         .all()
     )
 
     for document in documents:
-
         stored_hashes = _parse_visual_hashes(
             document.visual_hashes_json
         )
-
-        if not stored_hashes:
-            continue
-
-        if are_visual_near_duplicates(
-            visual_hashes,
-            stored_hashes,
-            threshold=threshold,
+        if (
+            stored_hashes
+            and are_visual_near_duplicates(
+                visual_hashes,
+                stored_hashes,
+                threshold=threshold,
+            )
         ):
+            return _safe_duplicate_result("visual", "document")
 
-            return {
-                "match_type": "visual",
-                "source": "document",
-                "record_id": (
-                    document.document_id
-                ),
-                "original_filename": (
-                    document.original_filename
-                ),
-            }
-
-    # -----------------------------------------------------
-    # Pending documents
-    # -----------------------------------------------------
+    if not uploaded_by:
+        return None
 
     pending_rows = (
-        session.query(
-            PendingDocumentUpload
-        )
+        session.query(PendingDocumentUpload)
         .filter(
-            PendingDocumentUpload
-            .visual_hashes_json
-            .isnot(
-                None
-            )
+            PendingDocumentUpload.visual_hashes_json.isnot(None),
+            PendingDocumentUpload.uploaded_by == str(uploaded_by),
+            PendingDocumentUpload.status.in_(
+                ACTIVE_PENDING_DUPLICATE_STATUSES
+            ),
         )
         .all()
     )
 
     for pending in pending_rows:
-
         stored_hashes = _parse_visual_hashes(
             pending.visual_hashes_json
         )
-
-        if not stored_hashes:
-            continue
-
-        if are_visual_near_duplicates(
-            visual_hashes,
-            stored_hashes,
-            threshold=threshold,
+        if (
+            stored_hashes
+            and are_visual_near_duplicates(
+                visual_hashes,
+                stored_hashes,
+                threshold=threshold,
+            )
         ):
-
-            return {
-                "match_type": "visual",
-                "source": "pending",
-                "record_id": (
-                    pending.pending_id
-                ),
-                "upload_id": (
-                    pending.upload_id
-                ),
-                "original_filename": (
-                    pending.original_filename
-                ),
-            }
+            return _safe_duplicate_result("visual", "pending")
 
     return None

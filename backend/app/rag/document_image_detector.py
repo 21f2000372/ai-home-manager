@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Optional
 
-from PIL import Image
-
-from app.rag.text_extraction import _easyocr_image
+from app.rag.text_extraction import extract_text
 
 
 @dataclass
@@ -36,43 +36,41 @@ DOCUMENT_HINTS = {
     "statement",
 }
 
+_PAGE_MARKER_RE = re.compile(
+    r"---\s*page\s+\d+\s*---",
+    flags=re.IGNORECASE,
+)
 
-def check_image_is_document(
-    file_path: str,
+
+def check_text_is_document(
+    text: str,
 ) -> DocumentImageResult:
     """
-    Decide whether an image appears to be a document.
+    Decide whether already-extracted image text is document-like.
 
-    This does NOT classify the document into Finance/Maintenance.
-    It only checks whether the image is document-like.
+    This is the fast path used by the ingestion pipeline. It avoids running
+    OCR a second time merely to decide whether the image looks like a
+    document.
     """
 
-    try:
-        with Image.open(file_path) as image:
-            text = _easyocr_image(image)
-
-    except Exception as exc:
-        return DocumentImageResult(
-            is_document=False,
-            confidence=0.0,
-            text="",
-            reason=f"Unable to inspect image: {exc}",
-        )
-
+    raw_text = text or ""
+    text_without_page_markers = _PAGE_MARKER_RE.sub(
+        " ",
+        raw_text,
+    )
     normalized = " ".join(
-        text.lower().split()
+        text_without_page_markers.lower().split()
     )
 
     if not normalized:
         return DocumentImageResult(
             is_document=False,
             confidence=0.10,
-            text="",
+            text=raw_text,
             reason="No readable text was detected in the image.",
         )
 
     words = normalized.split()
-
     word_count = len(words)
 
     document_hint_count = sum(
@@ -81,40 +79,71 @@ def check_image_is_document(
         if keyword in normalized
     )
 
-    # Very little text usually means this is not a useful document.
     if word_count < 3:
         return DocumentImageResult(
             is_document=False,
             confidence=0.25,
-            text=text,
-            reason="Image contains too little text to be treated as a document.",
+            text=raw_text,
+            reason=(
+                "Image contains too little text to be treated as a "
+                "document."
+            ),
         )
 
-    # Strong document signal.
-    if (
-        word_count >= 8
-        and document_hint_count >= 1
-    ):
+    if word_count >= 8 and document_hint_count >= 1:
         return DocumentImageResult(
             is_document=True,
             confidence=0.90,
-            text=text,
-            reason="Image contains substantial text and document-related terms.",
+            text=raw_text,
+            reason=(
+                "Image contains substantial text and document-related "
+                "terms."
+            ),
         )
 
-    # It has enough readable text to probably be a document,
-    # but the signal is weaker.
     if word_count >= 8:
         return DocumentImageResult(
             is_document=True,
             confidence=0.65,
-            text=text,
+            text=raw_text,
             reason="Image contains substantial readable text.",
         )
 
     return DocumentImageResult(
         is_document=False,
         confidence=0.40,
-        text=text,
+        text=raw_text,
         reason="Image does not contain enough document-like text.",
     )
+
+
+def check_image_is_document(
+    file_path: str,
+    extracted_text: Optional[str] = None,
+) -> DocumentImageResult:
+    """
+    Backwards-compatible image-document check.
+
+    Callers that already performed OCR should pass ``extracted_text`` so this
+    function performs only the inexpensive deterministic document-likeness
+    check. Older callers may continue to pass only ``file_path``; in that
+    case the public text-extraction API is used once.
+    """
+
+    if extracted_text is not None:
+        return check_text_is_document(extracted_text)
+
+    extraction = extract_text(file_path)
+
+    if not extraction.success:
+        return DocumentImageResult(
+            is_document=False,
+            confidence=0.0,
+            text="",
+            reason=(
+                extraction.reason
+                or "Unable to inspect image content."
+            ),
+        )
+
+    return check_text_is_document(extraction.text)

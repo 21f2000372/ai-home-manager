@@ -1,17 +1,43 @@
+"""Durable confirmation and editable-review handling for AI Home Manager.
+
+Step 7.1 of the production refactor.
+
+This module keeps normal-chat approvals durable in ``workflow_proposals`` and
+adds a safe edit loop.  A user may approve, reject, or describe changes to a
+pending action.  Edits do not mutate the stored tool call in-place.  Instead,
+the exact pending action is restored as edit context, the planner/specialist
+produce a revised complete action, duplicate/consistency checks run again, and
+the same durable proposal is advanced to a new revision.
+
+Compatibility target: Python 3.8+.
+
+Document proposals remain owned by the dedicated document workflow introduced
+in the next step.  The same revision semantics must be reused there.
+"""
+
 from __future__ import annotations
 
-from threading import Lock
-from typing import Any
+import hashlib
+import json
+import re
+from datetime import timedelta
+from typing import Any, Dict, Optional
+
+from langchain_core.messages import AIMessage
+from sqlalchemy import desc
 
 from app.ai.agents.state import AgentState
-
-
-# ------------------------------------------------------------------
-# Temporary in-memory pending confirmation store
-# ------------------------------------------------------------------
-
-_PENDING: dict[str, dict[str, Any]] = {}
-_LOCK = Lock()
+from app.db.base import SessionLocal, utcnow
+from app.models.workflows import WorkflowProposal
+from app.services.document_workflow import (
+    DocumentWorkflowError,
+    approve_document_review,
+    load_pending_document_review,
+    reject_document_review,
+)
+from app.services.document_execution import (
+    find_resumable_document_execution,
+)
 
 
 YES_RESPONSES = {
@@ -27,7 +53,6 @@ YES_RESPONSES = {
     "continue",
 }
 
-
 NO_RESPONSES = {
     "no",
     "n",
@@ -39,31 +64,70 @@ NO_RESPONSES = {
     "skip it",
 }
 
+EDIT_ONLY_RESPONSES = {
+    "edit",
+    "edit it",
+    "edit that",
+    "change",
+    "change it",
+    "change that",
+    "modify",
+    "modify it",
+    "modify that",
+    "revise",
+    "revise it",
+    "update it",
+    "update that",
+}
 
-def _confirmation_key(
-    state: AgentState,
-) -> str:
-    """
-    Prefer session_id because it normally identifies
-    the active user conversation.
-    """
+EDIT_PREFIXES = (
+    "edit ",
+    "change ",
+    "modify ",
+    "revise ",
+    "update ",
+    "add ",
+    "increase ",
+    "make it ",
+    "make that ",
+    "set ",
+    "replace ",
+    "assign ",
+    "move ",
+    "reschedule ",
+    "use ",
+    "instead ",
+    "rather ",
+    "actually ",
+)
+
+DEFAULT_CONFIRMATION_TTL_HOURS = 24
+
+
+class ConfirmationPersistenceError(RuntimeError):
+    """Raised when a review request cannot be safely persisted/restored."""
+
+
+def _normalize_reply(message: str) -> str:
+    return " ".join(
+        (message or "").casefold().strip().split()
+    )
+
+
+def _confirmation_key(state: AgentState) -> str:
+    """Return the stable conversation/session key used for proposal lookup."""
 
     return str(
         state.get("session_id")
         or state.get("conversation_id")
         or ""
-    )
+    ).strip()
 
 
-def _parse_decision(
-    message: str,
-) -> str | None:
-    value = " ".join(
-        (message or "")
-        .casefold()
-        .strip()
-        .split()
-    )
+def _parse_decision(message: str) -> Optional[str]:
+    """Parse deliberately explicit yes/no replies."""
+
+    value = _normalize_reply(message)
 
     if value in YES_RESPONSES:
         return "yes"
@@ -74,178 +138,1165 @@ def _parse_decision(
     return None
 
 
-def store_pending_confirmation(
-    state: AgentState,
-) -> None:
-    key = _confirmation_key(state)
+def _edit_request_kind(message: str) -> Optional[str]:
+    """Return ``prompt`` or ``detailed`` for conservative edit requests.
 
-    if not key:
-        return
+    We intentionally do not treat every non-yes/no message as an edit because
+    the user may abandon a pending review and ask an unrelated question.
+    """
 
-    payload = {
-        # Most important part:
-        # preserve the EXACT tool call selected previously.
-        "pending_tool_call": state.get(
-            "pending_tool_call"
-        ),
+    value = _normalize_reply(message)
 
-        "pending_ai_message": state.get(
-            "pending_ai_message"
-        ),
+    if not value:
+        return None
 
-        "planned_actions": state.get(
-            "planned_actions",
-            [],
-        ),
+    if value in EDIT_ONLY_RESPONSES:
+        return "prompt"
 
-        "current_action_index": state.get(
-            "current_action_index",
-            0,
-        ),
+    if value in _KEEP_EXISTING_RESPONSES:
+        return "detailed"
 
-        "duplicate_status": state.get(
-            "duplicate_status"
-        ),
+    if value.startswith(EDIT_PREFIXES):
+        return "detailed"
 
-        "duplicate_details": state.get(
-            "duplicate_details"
-        ),
+    return None
+
+
+
+
+_QUANTITY_TOKEN_RE = re.compile(
+    r"(?<![\w.])(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\b"
+)
+
+_EXPLICIT_SET_PREFIXES = (
+    "update ",
+    "change ",
+    "make ",
+    "set ",
+    "replace ",
+)
+
+_EXPLICIT_ADD_PREFIXES = (
+    "add ",
+    "increase ",
+)
+
+_KEEP_EXISTING_RESPONSES = {
+    "keep it",
+    "keep existing",
+    "keep the existing one",
+    "keep current",
+    "keep current quantity",
+    "leave it",
+    "leave it as is",
+    "leave as is",
+}
+
+_UNIT_ALIASES = {
+    "kg": "kg",
+    "kgs": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "g": "g",
+    "gm": "g",
+    "gms": "g",
+    "gram": "g",
+    "grams": "g",
+    "l": "litre",
+    "lt": "litre",
+    "ltr": "litre",
+    "litre": "litre",
+    "litres": "litre",
+    "liter": "litre",
+    "liters": "litre",
+    "ml": "ml",
+    "millilitre": "ml",
+    "millilitres": "ml",
+    "milliliter": "ml",
+    "milliliters": "ml",
+    "piece": "piece",
+    "pieces": "piece",
+    "pc": "piece",
+    "pcs": "piece",
+    "count": "count",
+    "unit": "count",
+    "units": "count",
+}
+
+
+def _canonical_unit(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+
+    normalized = _normalize_reply(value)
+    if not normalized:
+        return None
+
+    return _UNIT_ALIASES.get(normalized, normalized)
+
+
+def _explicit_duplicate_quantity_resolution(
+    message: str,
+    payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Resolve explicit low-risk quantity choices deterministically.
+
+    Supported choices for a matched grocery/inventory row are:
+    * set the existing quantity (``set/update/change it to 3 kg``),
+    * add more of the same unit (``add 2 kg more``), and
+    * keep the existing row unchanged (handled as a close/cancel decision).
+
+    The target database id always comes from server-side duplicate detection,
+    never from model output or user-provided ids.
+    """
+
+    value = _normalize_reply(message)
+
+    match = payload.get("duplicate_match")
+    if not isinstance(match, dict):
+        return None
+
+    record_type = str(match.get("record_type") or "")
+    if record_type not in {"grocery_item", "inventory_item"}:
+        return None
+
+    if value in _KEEP_EXISTING_RESPONSES:
+        return {
+            "mode": "keep",
+            "duplicate_match": match,
+        }
+
+    if value.startswith(_EXPLICIT_SET_PREFIXES):
+        mode = "set"
+    elif value.startswith(_EXPLICIT_ADD_PREFIXES):
+        mode = "add"
+    else:
+        return None
+
+    record_id = str(match.get("record_id") or "").strip()
+    update_tool = str(match.get("update_tool") or "").strip()
+    id_arg = str(match.get("record_id_arg") or "").strip()
+
+    if not record_id or not update_tool or not id_arg:
+        return None
+
+    tokens = list(_QUANTITY_TOKEN_RE.finditer(value))
+    if not tokens:
+        return None
+
+    token = tokens[-1]
+
+    try:
+        requested_quantity = float(token.group(1))
+    except (TypeError, ValueError):
+        return None
+
+    if requested_quantity < 0:
+        return None
+
+    requested_unit = _canonical_unit(token.group(2))
+    existing_unit = _canonical_unit(match.get("unit"))
+
+    if mode == "add":
+        try:
+            existing_quantity = float(match.get("quantity"))
+        except (TypeError, ValueError):
+            return None
+
+        # Adding quantities is safe only when the units are the same (or the
+        # user omitted the unit and therefore clearly refers to the existing
+        # unit). Unit conversion belongs in the later shared consistency
+        # service, not in this confirmation parser.
+        if (
+            requested_unit is not None
+            and existing_unit is not None
+            and requested_unit != existing_unit
+        ):
+            return None
+
+        unit = existing_unit or requested_unit
+        quantity = existing_quantity + requested_quantity
+    else:
+        unit = requested_unit or existing_unit
+        quantity = requested_quantity
+
+    args: Dict[str, Any] = {
+        id_arg: record_id,
+        "quantity": quantity,
     }
 
-    with _LOCK:
-        _PENDING[key] = payload
+    if unit is not None:
+        args["unit"] = unit
 
-
-def resume_confirmation_node(
-    state: AgentState,
-) -> dict:
-    """
-    Runs before normal retrieval/planning.
-
-    If there is a pending duplicate confirmation and the user
-    says yes/no, restore the previous tool call instead of
-    asking the LLM to recreate it.
-    """
-
-    key = _confirmation_key(state)
-
-    if not key:
-        return {
-            "confirmation_resolution": "none"
-        }
-
-    with _LOCK:
-        pending = _PENDING.get(key)
-
-    if not pending:
-        return {
-            "confirmation_resolution": "none"
-        }
-
-    decision = _parse_decision(
-        state.get("message", "")
+    display_quantity = (
+        str(int(quantity))
+        if float(quantity).is_integer()
+        else str(quantity)
     )
+    display_unit = (" " + unit) if unit else ""
 
-    # User sent some unrelated/new request rather than yes/no.
-    # Process it normally.
-    if decision is None:
-        return {
-            "confirmation_resolution": "none"
-        }
-
-    with _LOCK:
-        _PENDING.pop(
-            key,
-            None,
+    if mode == "add":
+        description = "Set {0} quantity to {1}{2} after adding more.".format(
+            match.get("name") or "the existing item",
+            display_quantity,
+            display_unit,
+        )
+    else:
+        description = "Set {0} quantity to {1}{2}.".format(
+            match.get("name") or "the existing item",
+            display_quantity,
+            display_unit,
         )
 
-    actions = list(
-        pending.get(
-            "planned_actions",
-            [],
-        )
-    )
+    return {
+        "mode": mode,
+        "tool_name": update_tool,
+        "tool_args": args,
+        "description": description,
+        "duplicate_match": match,
+    }
 
-    index = int(
-        pending.get(
-            "current_action_index",
-            0,
-        )
-    )
 
-    # ----------------------------------------------------------
-    # YES
-    # ----------------------------------------------------------
+def _close_duplicate_as_keep_existing(
+    *,
+    session,
+    proposal: WorkflowProposal,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Close a duplicate/conflict review without changing the existing row."""
 
-    if decision == "yes":
-        return {
-            "confirmation_resolution": "confirmed",
+    actions = list(payload.get("planned_actions") or [])
+    index = int(payload.get("current_action_index", 0) or 0)
 
-            "planned_actions": actions,
-            "current_action_index": index,
-
-            # Restore the EXACT proposed tool call.
-            "pending_tool_call": pending.get(
-                "pending_tool_call"
-            ),
-
-            "pending_ai_message": pending.get(
-                "pending_ai_message"
-            ),
-
-            "duplicate_status": pending.get(
-                "duplicate_status"
-            ),
-
-            "duplicate_details": pending.get(
-                "duplicate_details"
-            ),
-
-            "awaiting_confirmation": False,
-            "response": "",
-            "finished": False,
-        }
-
-    # ----------------------------------------------------------
-    # NO
-    # ----------------------------------------------------------
-
-    if index < len(actions):
-        action = dict(
-            actions[index]
-        )
-
+    if 0 <= index < len(actions):
+        action = dict(actions[index])
         action["status"] = "cancelled"
-
-        action["result"] = (
-            "Cancelled because the user did not "
-            "confirm the duplicate/conflicting action."
-        )
-
+        action["result"] = "Kept the existing item unchanged."
         actions[index] = action
+
+    proposal.status = "REJECTED"
+    proposal.updated_at = utcnow()
+    proposal.last_error = None
+    session.commit()
+
+    match = payload.get("duplicate_match") or {}
+    name = str(match.get("name") or "the existing item")
 
     return {
         "confirmation_resolution": "cancelled",
-
+        "confirmation_kind": payload.get("confirmation_kind") or proposal.kind,
+        "workflow_proposal_id": str(proposal.proposal_id),
+        "editing_workflow_proposal_id": None,
+        "pending_edit_context": None,
+        "force_action_review": False,
         "planned_actions": actions,
         "current_action_index": index,
-
         "pending_tool_call": None,
         "pending_ai_message": None,
-
         "awaiting_confirmation": False,
-
         "finished": True,
-
-        "response": (
-            "Okay, I won't perform that action."
-        ),
+        "response": "Okay, I kept {0} unchanged.".format(name),
     }
 
 
-def route_after_resume(
+def _stage_explicit_duplicate_resolution_for_confirmation(
+    *,
+    session,
+    proposal: WorkflowProposal,
+    payload: Dict[str, Any],
     state: AgentState,
-) -> str:
+    resolution: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Persist an explicit duplicate resolution as a new review revision.
+
+    The user's resolution (for example ``add 2 kg more``) determines the exact
+    update operation, but it is NOT itself treated as final approval.  The
+    revised operation is stored as revision N+1 in ``AWAITING_REVIEW`` and the
+    user must explicitly confirm it with ``yes`` before authorization/execution.
+
+    This keeps duplicate resolution separate from mutation approval and avoids
+    silently changing an existing household record after a clarification turn.
+    """
+
+    actions = list(payload.get("planned_actions") or [])
+    index = int(payload.get("current_action_index", 0) or 0)
+
+    if not (0 <= index < len(actions)):
+        raise ConfirmationPersistenceError(
+            "The pending duplicate action cannot be resolved safely."
+        )
+
+    revised_action = dict(actions[index])
+    revised_action["domain"] = "food"
+    revised_action["intent"] = "Update existing item"
+    revised_action["description"] = resolution["description"]
+    revised_action["status"] = "pending"
+    revised_action["result"] = None
+    actions[index] = revised_action
+
+    next_revision = int(proposal.revision or 1) + 1
+    tool_call_id = "duplicate-resolution-{0}-{1}".format(
+        proposal.proposal_id,
+        next_revision,
+    )
+
+    pending_tool_call = {
+        "name": resolution["tool_name"],
+        "args": dict(resolution["tool_args"]),
+        "id": tool_call_id,
+    }
+
+    pending_ai_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": resolution["tool_name"],
+                "args": dict(resolution["tool_args"]),
+                "id": tool_call_id,
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    revised_payload = dict(payload)
+    revised_payload.update(
+        {
+            "pending_tool_call": pending_tool_call,
+            "pending_ai_message": _serialize_ai_message(
+                pending_ai_message
+            ),
+            "planned_actions": actions,
+            "current_action_index": index,
+            "duplicate_status": "RESOLVED",
+            "duplicate_details": (
+                "The user explicitly resolved the duplicate by updating "
+                "the matched existing item."
+            ),
+            "duplicate_match": resolution.get("duplicate_match"),
+            "confirmation_kind": payload.get("confirmation_kind")
+            or proposal.kind,
+            "edit_metadata": {
+                "edited_from_proposal_id": str(proposal.proposal_id),
+                "previous_revision": int(proposal.revision or 1),
+                "user_edit_request": str(state.get("message") or ""),
+                "explicit_low_risk_resolution": True,
+            },
+        }
+    )
+
+    proposal.revision = next_revision
+    proposal.payload_json = _canonical_json(revised_payload)
+    proposal.args_hash = _payload_hash(revised_payload)
+    proposal.status = "AWAITING_REVIEW"
+    proposal.approved_by = None
+    proposal.approved_at = None
+    proposal.updated_at = utcnow()
+    proposal.expires_at = (
+        utcnow()
+        + timedelta(hours=DEFAULT_CONFIRMATION_TTL_HOURS)
+    )
+    proposal.last_error = None
+
+    session.commit()
+    session.refresh(proposal)
+
+    return {
+        "confirmation_resolution": "revised_review",
+        "confirmation_kind": payload.get("confirmation_kind") or proposal.kind,
+        "workflow_proposal_id": str(proposal.proposal_id),
+        "editing_workflow_proposal_id": None,
+        "pending_edit_context": None,
+        "force_action_review": False,
+        "planned_actions": actions,
+        "current_action_index": index,
+        "pending_tool_call": None,
+        "pending_ai_message": None,
+        "duplicate_status": "RESOLVED",
+        "duplicate_details": revised_payload["duplicate_details"],
+        "duplicate_match": resolution.get("duplicate_match"),
+        "awaiting_confirmation": True,
+        "response": (
+            "Proposed update: {0}\n"
+            "Reply yes to confirm this update or no to reject it. "
+            "You can also tell me what to change."
+        ).format(resolution["description"]),
+        "finished": True,
+    }
+
+
+def _json_default(value: Any) -> str:
+    return str(value)
+
+
+def _canonical_json(value: Any) -> str:
+    """Serialize deterministically so approval binds to one exact revision."""
+
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=_json_default,
+    )
+
+
+def _payload_hash(payload: Dict[str, Any]) -> str:
+    encoded = _canonical_json(payload).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _serialize_ai_message(message: Optional[AIMessage]) -> Optional[Dict[str, Any]]:
+    """Serialize only fields needed to resume the original tool call."""
+
+    if message is None:
+        return None
+
+    payload: Dict[str, Any] = {
+        "content": message.content,
+        "additional_kwargs": getattr(
+            message,
+            "additional_kwargs",
+            {},
+        ) or {},
+        "response_metadata": getattr(
+            message,
+            "response_metadata",
+            {},
+        ) or {},
+        "tool_calls": getattr(
+            message,
+            "tool_calls",
+            [],
+        ) or [],
+    }
+
+    message_id = getattr(message, "id", None)
+    if message_id is not None:
+        payload["id"] = message_id
+
+    message_name = getattr(message, "name", None)
+    if message_name is not None:
+        payload["name"] = message_name
+
+    return payload
+
+
+def _deserialize_ai_message(
+    payload: Optional[Dict[str, Any]],
+) -> Optional[AIMessage]:
+    """Rebuild the AI tool-call message required before its ToolMessage."""
+
+    if not payload:
+        return None
+
+    kwargs: Dict[str, Any] = {
+        "content": payload.get("content", ""),
+        "additional_kwargs": payload.get("additional_kwargs") or {},
+        "response_metadata": payload.get("response_metadata") or {},
+        "tool_calls": payload.get("tool_calls") or [],
+    }
+
+    if payload.get("id") is not None:
+        kwargs["id"] = payload.get("id")
+
+    if payload.get("name") is not None:
+        kwargs["name"] = payload.get("name")
+
+    try:
+        return AIMessage(**kwargs)
+    except Exception as exc:
+        raise ConfirmationPersistenceError(
+            "The saved approval message could not be restored."
+        ) from exc
+
+
+def _build_confirmation_payload(state: AgentState) -> Dict[str, Any]:
+    """Build the exact normal-chat action payload presented for approval."""
+
+    pending_message = state.get("pending_ai_message")
+
+    if pending_message is not None and not isinstance(
+        pending_message,
+        AIMessage,
+    ):
+        raise ConfirmationPersistenceError(
+            "Pending confirmation message is not an AIMessage."
+        )
+
+    edit_context = state.get("pending_edit_context") or None
+
+    return {
+        "pending_tool_call": state.get("pending_tool_call"),
+        "pending_ai_message": _serialize_ai_message(pending_message),
+        "planned_actions": list(
+            state.get("planned_actions") or []
+        ),
+        "current_action_index": int(
+            state.get("current_action_index", 0) or 0
+        ),
+        "duplicate_status": state.get("duplicate_status"),
+        "duplicate_details": state.get("duplicate_details"),
+        "duplicate_match": state.get("duplicate_match"),
+        "confirmation_kind": (
+            state.get("confirmation_kind")
+            or "action"
+        ),
+        "edit_metadata": {
+            "edited_from_proposal_id": state.get(
+                "editing_workflow_proposal_id"
+            ),
+            "previous_revision": (
+                edit_context.get("revision")
+                if isinstance(edit_context, dict)
+                else None
+            ),
+            "user_edit_request": (
+                state.get("message")
+                if state.get("editing_workflow_proposal_id")
+                else None
+            ),
+        },
+    }
+
+
+def _load_payload(proposal: WorkflowProposal) -> Dict[str, Any]:
+    """Load and integrity-check a stored proposal payload."""
+
+    try:
+        payload = json.loads(proposal.payload_json)
+    except Exception as exc:
+        raise ConfirmationPersistenceError(
+            "The saved approval request is unreadable."
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ConfirmationPersistenceError(
+            "The saved approval request has an invalid payload."
+        )
+
+    if _payload_hash(payload) != proposal.args_hash:
+        raise ConfirmationPersistenceError(
+            "The saved approval request failed its integrity check."
+        )
+
+    return payload
+
+
+def _query_pending_proposal(
+    session,
+    state: AgentState,
+) -> Optional[WorkflowProposal]:
+    """Return the newest unexpired pending normal-chat confirmation."""
+
+    key = _confirmation_key(state)
+
+    if not key:
+        return None
+
+    now = utcnow()
+
+    query = (
+        session.query(WorkflowProposal)
+        .filter(
+            WorkflowProposal.session_id == key,
+            WorkflowProposal.status == "AWAITING_REVIEW",
+            WorkflowProposal.kind.in_(["duplicate", "conflict", "action"]),
+        )
+    )
+
+    user_id = state.get("user_id")
+    if user_id:
+        query = query.filter(
+            WorkflowProposal.user_id == str(user_id)
+        )
+
+    proposal = query.order_by(
+        desc(WorkflowProposal.created_at),
+    ).first()
+
+    if proposal is None:
+        return None
+
+    expires_at = proposal.expires_at
+    if expires_at is not None:
+        comparable_now = now
+        if expires_at.tzinfo is None and comparable_now.tzinfo is not None:
+            comparable_now = comparable_now.replace(tzinfo=None)
+
+        if expires_at <= comparable_now:
+            proposal.status = "EXPIRED"
+            proposal.updated_at = now
+            session.commit()
+            return None
+
+    return proposal
+
+
+def _query_edit_target(
+    session,
+    state: AgentState,
+    proposal_id: str,
+) -> Optional[WorkflowProposal]:
+    """Load an editable proposal by internal state, never by user-supplied id."""
+
+    key = _confirmation_key(state)
+    if not key or not proposal_id:
+        return None
+
+    query = session.query(WorkflowProposal).filter(
+        WorkflowProposal.proposal_id == str(proposal_id),
+        WorkflowProposal.session_id == key,
+        WorkflowProposal.status == "AWAITING_REVIEW",
+        WorkflowProposal.kind.in_(["duplicate", "conflict", "action"]),
+    )
+
+    user_id = state.get("user_id")
+    if user_id:
+        query = query.filter(
+            WorkflowProposal.user_id == str(user_id)
+        )
+
+    return query.first()
+
+
+def store_pending_confirmation(state: AgentState) -> str:
+    """Persist or revise the exact normal-chat action shown for approval.
+
+    If ``editing_workflow_proposal_id`` is present, the existing durable
+    proposal is advanced to revision N+1.  Otherwise a new proposal row is
+    created.  Persistence is fail-closed.
+    """
+
+    key = _confirmation_key(state)
+
+    if not key:
+        raise ConfirmationPersistenceError(
+            "Cannot persist confirmation without a session identifier."
+        )
+
+    payload = _build_confirmation_payload(state)
+
+    if not payload.get("pending_tool_call"):
+        raise ConfirmationPersistenceError(
+            "Cannot persist confirmation without a pending tool call."
+        )
+
+    payload_json = _canonical_json(payload)
+    args_hash = _payload_hash(payload)
+
+    kind = str(
+        payload.get("confirmation_kind")
+        or "action"
+    )
+
+    if kind == "document":
+        raise ConfirmationPersistenceError(
+            "Document approvals must use the document workflow service."
+        )
+
+    session = SessionLocal()
+
+    try:
+        user_id = state.get("user_id")
+        edit_target_id = state.get("editing_workflow_proposal_id")
+
+        if edit_target_id:
+            proposal = _query_edit_target(
+                session,
+                state,
+                str(edit_target_id),
+            )
+
+            if proposal is None:
+                raise ConfirmationPersistenceError(
+                    "The pending action can no longer be edited."
+                )
+
+            # Verify the previous revision before replacing it.
+            _load_payload(proposal)
+
+            proposal.revision = int(proposal.revision or 0) + 1
+            proposal.payload_json = payload_json
+            proposal.args_hash = args_hash
+            proposal.kind = kind
+            proposal.status = "AWAITING_REVIEW"
+            proposal.approved_by = None
+            proposal.approved_at = None
+            proposal.updated_at = utcnow()
+            proposal.expires_at = (
+                utcnow()
+                + timedelta(hours=DEFAULT_CONFIRMATION_TTL_HOURS)
+            )
+            proposal.last_error = None
+
+            session.commit()
+            session.refresh(proposal)
+
+            return str(proposal.proposal_id)
+
+        # Only one unresolved normal-chat approval should be active for a
+        # session/user. Keep old rows for audit history, but cancel them.
+        existing_query = session.query(WorkflowProposal).filter(
+            WorkflowProposal.session_id == key,
+            WorkflowProposal.status == "AWAITING_REVIEW",
+        )
+
+        if user_id:
+            existing_query = existing_query.filter(
+                WorkflowProposal.user_id == str(user_id)
+            )
+
+        for existing in existing_query.all():
+            existing.status = "CANCELLED"
+            existing.updated_at = utcnow()
+            existing.last_error = (
+                "Superseded by a newer confirmation request."
+            )
+
+        proposal = WorkflowProposal(
+            session_id=key,
+            conversation_id=state.get("conversation_id"),
+            user_id=(
+                str(user_id)
+                if user_id
+                else None
+            ),
+            kind=kind,
+            revision=1,
+            payload_json=payload_json,
+            args_hash=args_hash,
+            pending_document_id=None,
+            status="AWAITING_REVIEW",
+            expires_at=(
+                utcnow()
+                + timedelta(hours=DEFAULT_CONFIRMATION_TTL_HOURS)
+            ),
+        )
+
+        session.add(proposal)
+        session.commit()
+        session.refresh(proposal)
+
+        return str(proposal.proposal_id)
+
+    except ConfirmationPersistenceError:
+        session.rollback()
+        raise
+    except Exception as exc:
+        session.rollback()
+        raise ConfirmationPersistenceError(
+            "Unable to persist the approval request."
+        ) from exc
+    finally:
+        session.close()
+
+
+def _current_action_description(payload: Dict[str, Any]) -> str:
+    actions = list(payload.get("planned_actions") or [])
+    index = int(payload.get("current_action_index", 0) or 0)
+
+    if 0 <= index < len(actions):
+        action = actions[index]
+        if isinstance(action, dict):
+            return str(
+                action.get("description")
+                or action.get("intent")
+                or "the pending action"
+            )
+
+    return "the pending action"
+
+
+def _resume_document_confirmation(
+    state: AgentState,
+    pending: Dict[str, Any],
+    decision: Optional[str],
+    edit_kind: Optional[str],
+) -> Dict[str, Any]:
+    """Handle yes/no/edit for a persisted document proposal."""
+
+    proposal_id = str(pending.get("proposal_id") or "")
+    pending_document_id = pending.get("pending_document_id")
+
+    if edit_kind == "prompt" and decision is None:
+        return {
+            "confirmation_resolution": "edit_prompt",
+            "confirmation_kind": "document",
+            "workflow_proposal_id": proposal_id,
+            "pending_document_id": pending_document_id,
+            "awaiting_confirmation": True,
+            "finished": True,
+            "response": (
+                "Sure. Tell me exactly what you want to change in the "
+                "document proposal, for example: 'change the amount to "
+                "500', 'remove action 2', or 'change the category to "
+                "Utilities'."
+            ),
+        }
+
+    if edit_kind == "detailed" and decision is None:
+        return {
+            "confirmation_resolution": "document_edit",
+            "confirmation_kind": "document",
+            "workflow_proposal_id": proposal_id,
+            "editing_workflow_proposal_id": proposal_id,
+            "pending_document_id": pending_document_id,
+            "document_edit_request": str(state.get("message") or ""),
+            "awaiting_confirmation": False,
+            "finished": False,
+            "response": "",
+        }
+
+    if decision == "yes":
+        try:
+            approved = approve_document_review(state)
+        except DocumentWorkflowError as exc:
+            return {
+                "confirmation_resolution": "edit_prompt",
+                "confirmation_kind": "document",
+                "workflow_proposal_id": proposal_id,
+                "pending_document_id": pending_document_id,
+                "awaiting_confirmation": True,
+                "finished": True,
+                "response": str(exc),
+            }
+
+        return {
+            "confirmation_resolution": "document_approved",
+            "confirmation_kind": "document",
+            "workflow_proposal_id": approved.get("proposal_id"),
+            "pending_document_id": pending_document_id,
+            "editing_workflow_proposal_id": None,
+            "document_edit_request": None,
+            "awaiting_confirmation": False,
+            "finished": False,
+            "response": "",
+        }
+
+    # NO / CANCEL
+    try:
+        rejected = reject_document_review(state)
+    except DocumentWorkflowError:
+        return {
+            "confirmation_resolution": "error",
+            "confirmation_kind": "document",
+            "workflow_proposal_id": proposal_id,
+            "awaiting_confirmation": False,
+            "finished": True,
+            "response": (
+                "I couldn't safely update the pending document review. "
+                "Please try again."
+            ),
+        }
+
+    return {
+        "confirmation_resolution": "document_rejected",
+        "confirmation_kind": "document",
+        "workflow_proposal_id": rejected.get("proposal_id"),
+        "pending_document_id": pending_document_id,
+        "editing_workflow_proposal_id": None,
+        "document_edit_request": None,
+        "awaiting_confirmation": False,
+        "finished": True,
+        "response": "Okay, I cancelled this document proposal.",
+    }
+
+
+
+def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
+    """Resolve approval/rejection/edit before normal planning.
+
+    Edits are never applied to the saved tool arguments directly.  Instead the
+    exact pending proposal becomes trusted edit context and the request routes
+    back through retrieval -> planner -> specialist -> duplicate/consistency
+    checks -> review.  The revised action is then stored as revision N+1.
+    """
+
+    key = _confirmation_key(state)
+
+    if not key:
+        return {
+            "confirmation_resolution": "none",
+        }
+
+    # If a prior request was approved and the process stopped before the
+    # execution node completed, resume that exact durable revision before
+    # planning a new request. ExecutionLedger makes completed action steps
+    # replay-safe.
+    try:
+        resumable = find_resumable_document_execution(state)
+    except Exception:
+        resumable = None
+
+    if resumable is not None:
+        return {
+            "confirmation_resolution": "document_execute_resume",
+            "confirmation_kind": "document",
+            "workflow_proposal_id": resumable.get("proposal_id"),
+            "pending_document_id": resumable.get("pending_document_id"),
+            "awaiting_confirmation": False,
+            "finished": False,
+            "response": "",
+        }
+
+    message = str(state.get("message", ""))
+    decision = _parse_decision(message)
+    edit_kind = _edit_request_kind(message)
+
+    if decision is None and edit_kind is None:
+        return {
+            "confirmation_resolution": "none",
+        }
+
+    # Document reviews use their own durable payload and edit path. Check
+    # them before the normal-chat approval shape so a bare yes/no always
+    # resolves against the one active review for this session.
+    try:
+        document_pending = load_pending_document_review(state)
+    except DocumentWorkflowError:
+        document_pending = None
+
+    if document_pending is not None:
+        return _resume_document_confirmation(
+            state,
+            document_pending,
+            decision,
+            edit_kind,
+        )
+
+    session = SessionLocal()
+
+    try:
+        proposal = _query_pending_proposal(
+            session,
+            state,
+        )
+
+        if proposal is None:
+            return {
+                "confirmation_resolution": "none",
+            }
+
+        payload = _load_payload(proposal)
+
+        actions = list(
+            payload.get("planned_actions") or []
+        )
+
+        index = int(
+            payload.get("current_action_index", 0) or 0
+        )
+
+        if edit_kind == "prompt" and decision is None:
+            return {
+                "confirmation_resolution": "edit_prompt",
+                "workflow_proposal_id": str(proposal.proposal_id),
+                "awaiting_confirmation": True,
+                "finished": True,
+                "response": (
+                    "Sure. Tell me exactly what you want to change in "
+                    "the pending action, for example: 'change the amount "
+                    "to 500' or 'assign it to Meera'."
+                ),
+            }
+
+        if edit_kind == "detailed" and decision is None:
+            explicit_resolution = _explicit_duplicate_quantity_resolution(
+                message,
+                payload,
+            )
+
+            if explicit_resolution is not None:
+                if explicit_resolution.get("mode") == "keep":
+                    return _close_duplicate_as_keep_existing(
+                        session=session,
+                        proposal=proposal,
+                        payload=payload,
+                    )
+
+                return _stage_explicit_duplicate_resolution_for_confirmation(
+                    session=session,
+                    proposal=proposal,
+                    payload=payload,
+                    state=state,
+                    resolution=explicit_resolution,
+                )
+
+            pending_tool_call = payload.get("pending_tool_call")
+
+            if not pending_tool_call:
+                raise ConfirmationPersistenceError(
+                    "The saved action cannot be edited because its tool call is missing."
+                )
+
+            current_action = None
+            if 0 <= index < len(actions):
+                maybe_action = actions[index]
+                if isinstance(maybe_action, dict):
+                    current_action = dict(maybe_action)
+
+            edit_context: Dict[str, Any] = {
+                "proposal_id": str(proposal.proposal_id),
+                "revision": int(proposal.revision or 1),
+                "confirmation_kind": payload.get("confirmation_kind") or proposal.kind,
+                "current_action_index": index,
+                "current_action": current_action,
+                "pending_tool_call": pending_tool_call,
+                "duplicate_status": payload.get("duplicate_status"),
+                "duplicate_details": payload.get("duplicate_details"),
+                "duplicate_match": payload.get("duplicate_match"),
+            }
+
+            return {
+                "confirmation_resolution": "edit",
+                "confirmation_kind": "action",
+                "workflow_proposal_id": str(proposal.proposal_id),
+                "editing_workflow_proposal_id": str(proposal.proposal_id),
+                "pending_edit_context": edit_context,
+                "force_action_review": True,
+                "planned_actions": [],
+                "current_action_index": 0,
+                "pending_tool_call": None,
+                "pending_ai_message": None,
+                "awaiting_confirmation": False,
+                "finished": False,
+                "response": "",
+            }
+
+        if decision == "yes":
+            duplicate_status = str(payload.get("duplicate_status") or "")
+            duplicate_match = payload.get("duplicate_match")
+            record_type = (
+                str(duplicate_match.get("record_type") or "")
+                if isinstance(duplicate_match, dict)
+                else ""
+            )
+
+            if (
+                duplicate_status == "CONFLICT"
+                and record_type in {"grocery_item", "inventory_item"}
+            ):
+                return {
+                    "confirmation_resolution": "edit_prompt",
+                    "confirmation_kind": payload.get("confirmation_kind") or proposal.kind,
+                    "workflow_proposal_id": str(proposal.proposal_id),
+                    "awaiting_confirmation": True,
+                    "finished": True,
+                    "response": _quantity_conflict_resolution_prompt(payload),
+                }
+
+            pending_tool_call = payload.get("pending_tool_call")
+
+            if not pending_tool_call:
+                raise ConfirmationPersistenceError(
+                    "The saved approval has no tool call."
+                )
+
+            pending_ai_message = _deserialize_ai_message(
+                payload.get("pending_ai_message")
+            )
+
+            if pending_ai_message is None:
+                raise ConfirmationPersistenceError(
+                    "The saved approval has no tool-call message."
+                )
+
+            proposal.status = "APPROVED"
+            proposal.approved_by = (
+                str(state.get("user_id"))
+                if state.get("user_id")
+                else None
+            )
+            proposal.approved_at = utcnow()
+            proposal.updated_at = utcnow()
+            session.commit()
+
+            return {
+                "confirmation_resolution": "confirmed",
+                "confirmation_kind": payload.get("confirmation_kind") or proposal.kind,
+                "workflow_proposal_id": str(proposal.proposal_id),
+                "editing_workflow_proposal_id": None,
+                "pending_edit_context": None,
+                "force_action_review": False,
+                "planned_actions": actions,
+                "current_action_index": index,
+                "pending_tool_call": pending_tool_call,
+                "pending_ai_message": pending_ai_message,
+                "duplicate_status": payload.get("duplicate_status"),
+                "duplicate_details": payload.get("duplicate_details"),
+                "duplicate_match": payload.get("duplicate_match"),
+                "awaiting_confirmation": False,
+                "response": "",
+                "finished": False,
+            }
+
+        # NO / CANCEL
+        if index < len(actions):
+            action = dict(actions[index])
+            action["status"] = "cancelled"
+            action["result"] = (
+                "Cancelled because the user did not confirm the action."
+            )
+            actions[index] = action
+
+        proposal.status = "REJECTED"
+        proposal.updated_at = utcnow()
+        session.commit()
+
+        return {
+            "confirmation_resolution": "cancelled",
+            "confirmation_kind": payload.get("confirmation_kind") or proposal.kind,
+            "workflow_proposal_id": str(proposal.proposal_id),
+            "editing_workflow_proposal_id": None,
+            "pending_edit_context": None,
+            "force_action_review": False,
+            "planned_actions": actions,
+            "current_action_index": index,
+            "pending_tool_call": None,
+            "pending_ai_message": None,
+            "awaiting_confirmation": False,
+            "finished": True,
+            "response": "Okay, I won't perform that action.",
+        }
+
+    except ConfirmationPersistenceError as exc:
+        session.rollback()
+
+        return {
+            "confirmation_resolution": "error",
+            "awaiting_confirmation": False,
+            "pending_tool_call": None,
+            "pending_ai_message": None,
+            "force_action_review": False,
+            "finished": True,
+            "response": (
+                "I couldn't safely restore the pending review. "
+                "Please submit the action again."
+            ),
+            "auth_error": str(exc),
+        }
+    except Exception:
+        session.rollback()
+
+        return {
+            "confirmation_resolution": "error",
+            "awaiting_confirmation": False,
+            "pending_tool_call": None,
+            "pending_ai_message": None,
+            "force_action_review": False,
+            "finished": True,
+            "response": (
+                "I couldn't safely restore the pending review. "
+                "Please submit the action again."
+            ),
+        }
+    finally:
+        session.close()
+
+
+def route_after_resume(state: AgentState) -> str:
+    """Route approval, cancellation, or edits without regenerating approvals."""
+
     resolution = state.get(
         "confirmation_resolution",
         "none",
@@ -254,34 +1305,153 @@ def route_after_resume(
     if resolution == "confirmed":
         return "authorize"
 
-    if resolution == "cancelled":
+    if resolution in {"document_approved", "document_execute_resume"}:
+        return "document_execute"
+
+    if resolution in {"edit", "document_edit"}:
+        # Re-run retrieval before either normal-action or document revision.
+        return "retrieve"
+
+    if resolution in {
+        "cancelled",
+        "error",
+        "edit_prompt",
+        "revised_review",
+        "document_rejected",
+    }:
         return "save"
 
     return "retrieve"
 
 
-def request_confirmation_node(
-    state: AgentState,
-) -> dict:
-    """
-    Store pending exact tool call and return a question to the user.
-    """
+def _quantity_conflict_resolution_prompt(payload: Dict[str, Any]) -> str:
+    """Build a safe user-facing resolution prompt with no internal ids."""
 
-    store_pending_confirmation(
-        state
+    match = payload.get("duplicate_match") or {}
+    call = payload.get("pending_tool_call") or {}
+    args = call.get("args") or {}
+
+    name = str(match.get("name") or args.get("name") or "this item")
+    existing_quantity = match.get("quantity")
+    existing_unit = _canonical_unit(match.get("unit"))
+    requested_quantity = args.get("quantity")
+    requested_unit = _canonical_unit(args.get("unit"))
+
+    existing_text = str(existing_quantity)
+    if existing_unit:
+        existing_text += " " + existing_unit
+
+    requested_text = str(requested_quantity)
+    if requested_unit:
+        requested_text += " " + requested_unit
+
+    same_unit = (
+        requested_unit is None
+        or existing_unit is None
+        or requested_unit == existing_unit
     )
 
-    details = (
-        state.get("duplicate_details")
-        or "A similar record already exists."
+    if same_unit:
+        try:
+            total = float(existing_quantity) + float(requested_quantity)
+            total_text = (
+                str(int(total)) if total.is_integer() else str(total)
+            )
+            if existing_unit or requested_unit:
+                total_text += " " + str(existing_unit or requested_unit)
+
+            return (
+                "{0} is already on the list at {1}, while your new request "
+                "mentions {2}. Would you like me to set it to {2}, add {2} "
+                "more ({3} total), or keep it at {1}?\n"
+                "Reply with something explicit such as 'set it to {2}', "
+                "'add {2} more', or 'keep it'."
+            ).format(name, existing_text, requested_text, total_text)
+        except (TypeError, ValueError):
+            pass
+
+    return (
+        "{0} already exists at {1}, while your new request mentions {2}. "
+        "Tell me explicitly whether to set the existing quantity to {2}, "
+        "keep the current quantity, or how you want the quantities combined."
+    ).format(name, existing_text, requested_text)
+
+
+def request_confirmation_node(state: AgentState) -> Dict[str, Any]:
+    """Persist an exact normal-chat action, then offer approve/edit/cancel."""
+
+    try:
+        proposal_id = store_pending_confirmation(state)
+    except ConfirmationPersistenceError:
+        return {
+            "workflow_proposal_id": None,
+            "awaiting_confirmation": False,
+            "finished": True,
+            "response": (
+                "I found an action that needs review, but I couldn't save "
+                "the review safely. Please try again."
+            ),
+        }
+
+    details = state.get("duplicate_details")
+
+    duplicate_match = state.get("duplicate_match")
+    record_type = (
+        str(duplicate_match.get("record_type") or "")
+        if isinstance(duplicate_match, dict)
+        else ""
+    )
+
+    if (
+        state.get("duplicate_status") == "CONFLICT"
+        and record_type in {"grocery_item", "inventory_item"}
+    ):
+        payload = _build_confirmation_payload(state)
+        return {
+            "workflow_proposal_id": proposal_id,
+            "confirmation_kind": state.get("confirmation_kind") or "conflict",
+            "awaiting_confirmation": True,
+            "finished": True,
+            "response": _quantity_conflict_resolution_prompt(payload),
+        }
+
+    actions = list(state.get("planned_actions") or [])
+    index = int(state.get("current_action_index", 0) or 0)
+    action_description = "the pending action"
+
+    if 0 <= index < len(actions):
+        current = actions[index]
+        if isinstance(current, dict):
+            action_description = str(
+                current.get("description")
+                or current.get("intent")
+                or action_description
+            )
+
+    parts = []
+    if details:
+        parts.append(str(details))
+
+    if state.get("editing_workflow_proposal_id"):
+        parts.append(
+            "Revised action: {0}".format(action_description)
+        )
+    else:
+        parts.append(
+            "Action for review: {0}".format(action_description)
+        )
+
+    parts.append(
+        "Reply yes to approve, no to cancel, or tell me what you want to change."
     )
 
     return {
+        "workflow_proposal_id": proposal_id,
+        "confirmation_kind": (
+            state.get("confirmation_kind")
+            or "action"
+        ),
         "awaiting_confirmation": True,
         "finished": True,
-        "response": (
-            f"{details}\n"
-            "Do you want me to continue anyway? "
-            "Reply yes or no."
-        ),
+        "response": "\n".join(parts),
     }

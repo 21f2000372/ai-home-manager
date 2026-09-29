@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Set
+
 
 @dataclass
 class GuardrailResult:
@@ -10,31 +11,24 @@ class GuardrailResult:
     reason: Optional[str] = None
 
 
-# Minimum amount of extracted text before we trust the document enough
-# to continue automatically.
 MIN_EXTRACTED_TEXT_LENGTH = 20
-
-# Classification below this level should go to manual review.
 MIN_CLASSIFICATION_CONFIDENCE = 0.60
+
+SUPPORTED_DOCUMENT_DOMAINS: Set[str] = {
+    "Finance",
+    "Food",
+    "Maintenance",
+    "Tasks",
+}
 
 
 def check_extracted_text(
     text: str,
 ) -> GuardrailResult:
-    """
-    Validate extracted OCR/PDF text.
-
-    Possible statuses:
-        allowed
-        needs_review
-        rejected
-    """
-
     cleaned = " ".join(
-        text.strip().split()
+        (text or "").strip().split()
     )
 
-    # No text at all.
     if not cleaned:
         return GuardrailResult(
             allowed=False,
@@ -42,7 +36,6 @@ def check_extracted_text(
             reason="No readable text was detected in the document.",
         )
 
-    # Some text exists, but not enough to trust automatically.
     if len(cleaned) < MIN_EXTRACTED_TEXT_LENGTH:
         return GuardrailResult(
             allowed=False,
@@ -66,14 +59,10 @@ def check_classification(
     confidence: float,
 ) -> GuardrailResult:
     """
-    Validate the result of document classification.
+    Validate deterministic document classification.
 
-    Supported domains:
-        Finance
-        Maintenance
-
-    Irrelevant documents are rejected.
-    Uncertain documents go to review.
+    Classification is a routing/review signal only. It does not authorize
+    reads or writes and does not replace the tool-less document interpreter.
     """
 
     if domain == "Irrelevant":
@@ -81,8 +70,8 @@ def check_classification(
             allowed=False,
             status="rejected",
             reason=(
-                "The document is unrelated to supported "
-                "Finance or Maintenance domains."
+                "The document appears unrelated to supported "
+                "household-management domains."
             ),
         )
 
@@ -90,15 +79,10 @@ def check_classification(
         return GuardrailResult(
             allowed=False,
             status="needs_review",
-            reason=(
-                "The document could not be confidently classified."
-            ),
+            reason="The document could not be confidently classified.",
         )
 
-    if domain not in {
-        "Finance",
-        "Maintenance",
-    }:
+    if domain not in SUPPORTED_DOCUMENT_DOMAINS:
         return GuardrailResult(
             allowed=False,
             status="rejected",

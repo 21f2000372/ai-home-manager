@@ -1,13 +1,38 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
+from typing import List, Optional
 
 import easyocr
 import fitz
 import numpy as np
-from PIL import Image
-from typing import Optional
+from PIL import Image, ImageOps
+
+
+logger = logging.getLogger(__name__)
+
+
+IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+}
+
+MIN_EMBEDDED_TEXT_LENGTH = 30
+OCR_CONFIDENCE_THRESHOLD = 0.20
+PDF_RENDER_SCALE = 2
+
+# Most correctly-oriented document images should need only one OCR pass.
+# Additional rotations are attempted only when the first pass contains too
+# little useful text. This preserves rotated-image support while avoiding four
+# OCR passes for the common case.
+MIN_ORIENTATION_TEXT_LENGTH = 24
+MIN_ORIENTATION_WORDS = 4
+
 
 @dataclass
 class TextExtractionResult:
@@ -18,32 +43,33 @@ class TextExtractionResult:
     reason: Optional[str] = None
 
 
-# Create the OCR reader only once.
-# gpu=False keeps this compatible with normal laptops/servers.
+# Create the OCR reader once per application process. gpu=False keeps the
+# current laptop/server behavior. The reader is protected by a lock because
+# EasyOCR/PyTorch reader thread-safety is not guaranteed across simultaneous
+# Flask requests.
 _OCR_READER = easyocr.Reader(
     ["en"],
     gpu=False,
 )
+_OCR_LOCK = Lock()
 
 
 def extract_text(file_path: str) -> TextExtractionResult:
     """
-    Extract text from a supported staged file.
+    Extract readable text from a supported staged document.
 
-    Supported:
+    Supported file types:
     - PDF
     - JPG / JPEG
     - PNG
     - WEBP
 
-    PDF flow:
-    1. Try normal embedded PDF text.
-    2. If the PDF appears scanned, render pages and use EasyOCR.
+    Every successful extraction contains explicit page markers in the form:
 
-    Image flow:
-    1. Correct EXIF orientation where possible.
-    2. Try 0°, 90°, 180°, 270°.
-    3. Keep the orientation that produces the most OCR text.
+        --- Page N ---
+
+    This function only reads the document. It does not classify it, infer
+    business actions, persist permanent files, or execute mutations.
     """
 
     path = Path(file_path)
@@ -56,17 +82,20 @@ def extract_text(file_path: str) -> TextExtractionResult:
             reason="File does not exist.",
         )
 
+    if not path.is_file():
+        return TextExtractionResult(
+            success=False,
+            text="",
+            method="none",
+            reason="Path is not a file.",
+        )
+
     extension = path.suffix.lower()
 
     if extension == ".pdf":
         return _extract_pdf(path)
 
-    if extension in {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-    }:
+    if extension in IMAGE_EXTENSIONS:
         return _extract_image(path)
 
     return TextExtractionResult(
@@ -79,34 +108,48 @@ def extract_text(file_path: str) -> TextExtractionResult:
 
 def _extract_pdf(path: Path) -> TextExtractionResult:
     """
-    Extract text from a PDF.
+    Extract text from a PDF while preserving page evidence.
 
-    If useful embedded text exists, return it directly.
-    Otherwise OCR each rendered page.
+    Strategy:
+    1. Read embedded text from every page.
+    2. If the document contains enough embedded text overall, return it.
+    3. Otherwise render every page and OCR it.
+
+    Mixed per-page OCR remains a later hardening step so this performance
+    refactor does not silently alter the document-reading contract.
     """
 
-    try:
-        document = fitz.open(path)
+    document = None
 
+    try:
+        document = fitz.open(str(path))
         page_count = len(document)
 
-        embedded_pages: list[str] = []
+        if page_count <= 0:
+            return TextExtractionResult(
+                success=False,
+                text="",
+                method="pdf",
+                page_count=0,
+                reason="PDF contains no pages.",
+            )
 
-        for page in document:
-            text = page.get_text("text").strip()
+        embedded_pages: List[str] = []
 
-            if text:
-                embedded_pages.append(text)
+        for page_number, page in enumerate(document, start=1):
+            page_text = page.get_text("text").strip()
 
-        embedded_text = "\n\n".join(
-            embedded_pages
-        ).strip()
+            if page_text:
+                embedded_pages.append(
+                    _format_page_text(
+                        page_number=page_number,
+                        text=page_text,
+                    )
+                )
 
-        # If enough text was extracted directly,
-        # don't waste time doing OCR.
-        if len(embedded_text) >= 30:
-            document.close()
+        embedded_text = "\n\n".join(embedded_pages).strip()
 
+        if len(embedded_text) >= MIN_EMBEDDED_TEXT_LENGTH:
             return TextExtractionResult(
                 success=True,
                 text=embedded_text,
@@ -114,41 +157,20 @@ def _extract_pdf(path: Path) -> TextExtractionResult:
                 page_count=page_count,
             )
 
-        # Otherwise OCR the PDF pages.
-        ocr_pages: list[str] = []
+        ocr_pages: List[str] = []
 
-        for page_number, page in enumerate(
-            document,
-            start=1,
-        ):
-            pixmap = page.get_pixmap(
-                matrix=fitz.Matrix(2, 2),
-                alpha=False,
-            )
-
-            image = Image.frombytes(
-                "RGB",
-                (
-                    pixmap.width,
-                    pixmap.height,
-                ),
-                pixmap.samples,
-            )
-
-            page_text = _extract_best_orientation_text(
-                image
-            )
+        for page_number, page in enumerate(document, start=1):
+            page_text = _ocr_pdf_page(page)
 
             if page_text:
                 ocr_pages.append(
-                    f"--- Page {page_number} ---\n{page_text}"
+                    _format_page_text(
+                        page_number=page_number,
+                        text=page_text,
+                    )
                 )
 
-        document.close()
-
-        combined_text = "\n\n".join(
-            ocr_pages
-        ).strip()
+        combined_text = "\n\n".join(ocr_pages).strip()
 
         if not combined_text:
             return TextExtractionResult(
@@ -156,7 +178,9 @@ def _extract_pdf(path: Path) -> TextExtractionResult:
                 text="",
                 method="pdf_ocr",
                 page_count=page_count,
-                reason="No readable text could be extracted from the PDF.",
+                reason=(
+                    "No readable text could be extracted from the PDF."
+                ),
             )
 
         return TextExtractionResult(
@@ -166,149 +190,214 @@ def _extract_pdf(path: Path) -> TextExtractionResult:
             page_count=page_count,
         )
 
-    except Exception as exc:
+    except Exception:
+        logger.exception(
+            "PDF text extraction failed for staged file %s",
+            path.name,
+        )
+
         return TextExtractionResult(
             success=False,
             text="",
             method="pdf",
-            reason=f"PDF extraction failed: {exc}",
+            reason="PDF text extraction failed.",
         )
+
+    finally:
+        if document is not None:
+            try:
+                document.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close PDF document %s",
+                    path.name,
+                )
 
 
 def _extract_image(path: Path) -> TextExtractionResult:
     """
-    OCR an image file.
+    OCR a single image file and expose it as page 1 evidence.
     """
 
     try:
-        with Image.open(path) as image:
-            image = _apply_exif_orientation(
-                image
-            )
-
-            text = _extract_best_orientation_text(
-                image
-            )
+        with Image.open(str(path)) as source_image:
+            image = _apply_exif_orientation(source_image)
+            text = _extract_best_orientation_text(image)
 
         if not text:
             return TextExtractionResult(
                 success=False,
                 text="",
                 method="image_ocr",
+                page_count=1,
                 reason="No readable text found in image.",
             )
 
         return TextExtractionResult(
             success=True,
-            text=text,
+            text=_format_page_text(
+                page_number=1,
+                text=text,
+            ),
             method="image_ocr",
             page_count=1,
         )
 
-    except Exception as exc:
+    except Exception:
+        logger.exception(
+            "Image OCR failed for staged file %s",
+            path.name,
+        )
+
         return TextExtractionResult(
             success=False,
             text="",
             method="image_ocr",
-            reason=f"Image OCR failed: {exc}",
+            page_count=1,
+            reason="Image OCR failed.",
         )
+
+
+def _ocr_pdf_page(page: fitz.Page) -> str:
+    """
+    Render one PDF page and OCR the rendered image.
+    """
+
+    pixmap = page.get_pixmap(
+        matrix=fitz.Matrix(
+            PDF_RENDER_SCALE,
+            PDF_RENDER_SCALE,
+        ),
+        alpha=False,
+    )
+
+    image = Image.frombytes(
+        "RGB",
+        (
+            pixmap.width,
+            pixmap.height,
+        ),
+        pixmap.samples,
+    )
+
+    return _extract_best_orientation_text(image)
 
 
 def _extract_best_orientation_text(
     image: Image.Image,
 ) -> str:
     """
-    OCR an image in four orientations and keep
-    the orientation that gives the most text.
+    OCR the normal orientation first and rotate only when necessary.
+
+    The previous implementation OCRed 0/90/180/270 degrees for every image.
+    This implementation keeps that fallback for difficult/rotated documents,
+    but returns after the first pass when enough readable text is found.
     """
 
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    candidates = [
-        image,
-        image.rotate(
-            90,
-            expand=True,
-        ),
-        image.rotate(
-            180,
-            expand=True,
-        ),
-        image.rotate(
-            270,
-            expand=True,
-        ),
-    ]
+    first_text = _easyocr_image(image)
 
-    best_text = ""
+    if _ocr_text_is_sufficient(first_text):
+        return first_text.strip()
 
-    for candidate in candidates:
-        text = _easyocr_image(
-            candidate
-        )
+    best_text = first_text
 
-        if len(text) > len(best_text):
+    for angle in (90, 180, 270):
+        candidate = image.rotate(angle, expand=True)
+        text = _easyocr_image(candidate)
+
+        if _ocr_quality_score(text) > _ocr_quality_score(best_text):
             best_text = text
 
+        if _ocr_text_is_sufficient(best_text):
+            # Once a fallback orientation produces clearly usable text, avoid
+            # paying for additional OCR passes.
+            break
+
     return best_text.strip()
+
+
+def _ocr_text_is_sufficient(text: str) -> bool:
+    clean_text = " ".join((text or "").split())
+
+    if len(clean_text) < MIN_ORIENTATION_TEXT_LENGTH:
+        return False
+
+    return len(clean_text.split()) >= MIN_ORIENTATION_WORDS
+
+
+def _ocr_quality_score(text: str) -> int:
+    """
+    Lightweight deterministic score for comparing orientation candidates.
+    """
+
+    clean_text = " ".join((text or "").split())
+    word_count = len(clean_text.split())
+    alphanumeric_count = sum(
+        1
+        for char in clean_text
+        if char.isalnum()
+    )
+
+    return (word_count * 10) + alphanumeric_count
+
 
 def _preprocess_image(
     image: Image.Image,
 ) -> Image.Image:
     """
-    Basic preprocessing to improve OCR quality.
+    Apply simple deterministic preprocessing before OCR.
     """
 
-    # Convert to grayscale
-    image = image.convert("L")
+    grayscale = image.convert("L")
 
-    # Increase contrast using a simple threshold
-    image = image.point(
+    return grayscale.point(
         lambda pixel: 0 if pixel < 180 else 255
     )
 
-    return image
+
 def _easyocr_image(
     image: Image.Image,
 ) -> str:
     """
-    Run EasyOCR on a PIL image.
+    Run EasyOCR on a PIL image and discard very low-confidence OCR noise.
     """
 
-    image = _preprocess_image(image)
-    image_array = np.array(image)
-    results = _OCR_READER.readtext(
-        image_array,
-        detail=1,
-        paragraph=False,
-    )
+    processed_image = _preprocess_image(image)
+    image_array = np.array(processed_image)
 
-    lines: list[str] = []
+    with _OCR_LOCK:
+        results = _OCR_READER.readtext(
+            image_array,
+            detail=1,
+            paragraph=False,
+        )
+
+    lines: List[str] = []
 
     for result in results:
         # EasyOCR detail=1 returns:
-        #
-        # (
-        #     bounding_box,
-        #     text,
-        #     confidence,
-        # )
-
+        # (bounding_box, text, confidence)
         _, text, confidence = result
 
-        text = text.strip()
+        normalized_text = str(text).strip()
 
-        if not text:
+        if not normalized_text:
             continue
 
-        # Ignore very uncertain OCR noise.
-        if confidence < 0.20:
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+
+        if confidence_value < OCR_CONFIDENCE_THRESHOLD:
             continue
 
-        lines.append(text)
+        lines.append(normalized_text)
 
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 
 def _apply_exif_orientation(
@@ -316,14 +405,34 @@ def _apply_exif_orientation(
 ) -> Image.Image:
     """
     Apply EXIF orientation information when available.
+
+    A copy is returned so the image remains valid after the source image's
+    context manager closes.
     """
 
     try:
-        from PIL import ImageOps
-
-        return ImageOps.exif_transpose(
-            image
-        )
-
+        corrected = ImageOps.exif_transpose(image)
+        return corrected.copy()
     except Exception:
-        return image
+        logger.exception(
+            "Unable to apply EXIF orientation; continuing with original "
+            "image."
+        )
+        return image.copy()
+
+
+def _format_page_text(
+    page_number: int,
+    text: str,
+) -> str:
+    """
+    Format extracted text with the stable page marker used by the document
+    proposal/evidence pipeline.
+    """
+
+    clean_text = text.strip()
+
+    return "--- Page {0} ---\n{1}".format(
+        page_number,
+        clean_text,
+    )

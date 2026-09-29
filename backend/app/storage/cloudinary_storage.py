@@ -1,32 +1,37 @@
+"""Private Cloudinary storage helpers for AI Home Manager.
+
+Step 8B adds deterministic public IDs so an archive upload is replay-safe: if
+the process stops after Cloudinary accepted the file but before the database
+transaction commits, a retry overwrites the same private asset instead of
+creating a second copy.
+
+Compatibility target: Python 3.8+.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 import cloudinary
 import cloudinary.uploader
 import cloudinary.utils
-from typing import List, Optional
+
 from app.config import config
 from app.rag.file_validation import validate_file
+
 
 def configure_cloudinary() -> None:
     """Configure the Cloudinary Python SDK."""
 
     if not config.CLOUDINARY_CLOUD_NAME:
-        raise RuntimeError(
-            "CLOUDINARY_CLOUD_NAME is missing."
-        )
+        raise RuntimeError("CLOUDINARY_CLOUD_NAME is missing.")
 
     if not config.CLOUDINARY_API_KEY:
-        raise RuntimeError(
-            "CLOUDINARY_API_KEY is missing."
-        )
+        raise RuntimeError("CLOUDINARY_API_KEY is missing.")
 
     if not config.CLOUDINARY_API_SECRET:
-        raise RuntimeError(
-            "CLOUDINARY_API_SECRET is missing."
-        )
+        raise RuntimeError("CLOUDINARY_API_SECRET is missing.")
 
     cloudinary.config(
         cloud_name=config.CLOUDINARY_CLOUD_NAME,
@@ -40,32 +45,40 @@ def upload_file(
     file_path: str,
     *,
     folder: Optional[str] = None,
-) -> dict[str, Any]:
-    """
-    Upload a document or image as an authenticated Cloudinary asset.
+    public_id: Optional[str] = None,
+    overwrite: bool = True,
+) -> Dict[str, Any]:
+    """Upload a document/image as an authenticated Cloudinary asset.
 
-    The uploaded file is private and is not publicly accessible.
+    ``public_id`` may be supplied by a durable workflow to make an external
+    upload idempotent across retries.  The file remains authenticated/private.
     """
 
     configure_cloudinary()
 
     path = Path(file_path)
-
     if not path.exists():
         raise FileNotFoundError(
-            f"File does not exist: {file_path}"
+            "File does not exist: {0}".format(file_path)
         )
 
-    upload_folder = (
-        folder
-        or config.CLOUDINARY_FOLDER
-    )
+    upload_folder = folder or config.CLOUDINARY_FOLDER
+
+    kwargs: Dict[str, Any] = {
+        "folder": upload_folder,
+        "resource_type": "auto",
+        "type": "authenticated",
+        "overwrite": bool(overwrite),
+    }
+
+    if public_id:
+        kwargs["public_id"] = str(public_id)
+        kwargs["unique_filename"] = False
+        kwargs["use_filename"] = False
 
     result = cloudinary.uploader.upload(
         str(path),
-        folder=upload_folder,
-        resource_type="auto",
-        type="authenticated",
+        **kwargs
     )
 
     return {
@@ -75,17 +88,12 @@ def upload_file(
         "type": result.get("type"),
         "format": result.get("format"),
         "bytes": result.get("bytes"),
-        "original_filename": result.get(
-            "original_filename"
-        ),
+        "original_filename": result.get("original_filename"),
     }
 
-def validate_and_upload_file(file_path: str) -> dict:
-    """
-    Validate a local file first.
 
-    Only valid PDF/image files are uploaded to Cloudinary.
-    """
+def validate_and_upload_file(file_path: str) -> Dict[str, Any]:
+    """Validate a local file before uploading it to private storage."""
 
     validation = validate_file(file_path)
 
@@ -110,18 +118,15 @@ def validate_and_upload_file(file_path: str) -> dict:
         },
         "cloudinary": upload_result,
     }
+
+
 def generate_download_url(
     public_id: str,
     file_format: str,
     *,
     resource_type: str = "image",
 ) -> str:
-    """
-    Generate a signed Cloudinary download URL.
-
-    The caller should perform authorization checks
-    before calling this function.
-    """
+    """Generate a signed download URL after caller-side authorization."""
 
     configure_cloudinary()
 
@@ -137,10 +142,8 @@ def delete_file(
     public_id: str,
     *,
     resource_type: str = "image",
-) -> dict[str, Any]:
-    """
-    Delete an authenticated asset from Cloudinary.
-    """
+) -> Dict[str, Any]:
+    """Delete an authenticated Cloudinary asset."""
 
     configure_cloudinary()
 
