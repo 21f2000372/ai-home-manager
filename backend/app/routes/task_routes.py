@@ -37,7 +37,7 @@ def get_tasks():
                 "task_id": t.task_id,
                 "title": t.title,
                 "description": t.description,
-                "assigned_to": t.assigned_to,
+                "assigned_to": t.assignee.display_name if t.assignee else None,
                 "due_at": t.due_at.isoformat() if t.due_at else None,
                 "priority": t.priority.value,
                 "status": t.status.value,

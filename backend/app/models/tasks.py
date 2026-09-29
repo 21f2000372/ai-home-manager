@@ -72,6 +72,12 @@ class Task(Base):
         ForeignKey("recurrence_rules.rule_id", ondelete="SET NULL"), nullable=True
     )
 
+    assignee: Mapped[Optional["User"]] = relationship(
+        "User", 
+        foreign_keys=[assigned_to],
+        lazy="selectin"  
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     recurrence_rule: Mapped[Optional["RecurrenceRule"]] = relationship(back_populates="tasks")
