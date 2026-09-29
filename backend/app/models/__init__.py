@@ -34,6 +34,7 @@ from app.models.documents import (
     Conversation,
     Document,
     DocumentLink,
+    PendingDocumentUpload,
 )
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     # documents / conversation
     "Document",
     "DocumentLink",
+    "PendingDocumentUpload",
     "Conversation",
     "AgentInteraction",
 ]

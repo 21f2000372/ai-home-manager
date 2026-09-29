@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Optional, TypedDict
 
-from langchain_core.messages import BaseMessage,AIMessage
+from langchain_core.messages import BaseMessage, AIMessage
 from langgraph.graph.message import add_messages
 
 
@@ -81,7 +81,21 @@ class AgentState(TypedDict, total=False):
 
     authorized: bool
     auth_error: Optional[str]
+    # ------------------------------------------------------------------
+    # Duplicate / conflict detection
+    # ------------------------------------------------------------------
 
+    # NEW | DUPLICATE | CONFLICT
+    duplicate_status: Optional[str]
+
+    # Human-readable information about the existing record.
+    duplicate_details: Optional[str]
+
+    # True when execution is waiting for explicit user confirmation.
+    awaiting_confirmation: bool
+
+    # none | confirmed | cancelled
+    confirmation_resolution: Optional[str]
 
     # ------------------------------------------------------------------
     # Loop safety
@@ -98,3 +112,23 @@ class AgentState(TypedDict, total=False):
     response: str
     interaction_id: Optional[str]
     embedded: bool
+    # ------------------------------------------------------------------
+    # Document ingestion
+    # ------------------------------------------------------------------
+
+    uploaded_file: Optional[Any]
+
+    document_ingestion_result: Optional[dict[str, Any]]
+
+    document_fields: Optional[dict[str, Any]]
+
+    document_field_warnings: list[str]
+
+    document_proposed_actions: list[dict[str, Any]]
+
+    pending_document_id: Optional[str]
+
+    document_preview: Optional[dict[str, Any]]
+
+    # none | duplicate | document
+    confirmation_kind: Optional[str]

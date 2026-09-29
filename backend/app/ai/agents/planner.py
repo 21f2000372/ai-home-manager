@@ -5,15 +5,24 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.ai.agents.llm import get_llm
 from app.ai.agents.state import AgentState
-
+from typing import Literal
 
 class PlannedActionModel(BaseModel):
-    domain: str = Field(
-        description="One of: finance, tasks, food, maintenance, general"
+    domain: Literal[
+        "finance",
+        "tasks",
+        "food",
+        "maintenance",
+        "documents",
+        "general",
+    ] = Field(
+        description="The single domain for this action"
     )
+
     intent: str = Field(
         description="Short description of the requested action"
     )
+
     description: str = Field(
         description="The specific action the user wants performed"
     )
@@ -25,37 +34,24 @@ class PlanModel(BaseModel):
 
 _PLANNER_PROMPT = """
 You are the planning component of a household management assistant.
-
 Break the user's CURRENT request into independent actions.
-
 Available domains:
-
-Available domains:
-
 - finance:
   expenses, payments, advances already paid, budgets, bills, spending
-
 - tasks:
   to-dos, chores, reminders, scheduled activities, task management
-
 - food:
   groceries, grocery lists, food inventory
-
 - maintenance:
   appliances, household problems, maintenance issues, repairs
-
 - documents:
   uploaded document metadata, receipts, bills, warranties,
   document records
-
 - general:
   questions or requests that do not require a household action
-
 The user may be continuing a previous conversation.
-
 Relevant context from previous interactions may be provided below.
 Use that context ONLY to resolve references such as:
-
 - "it"
 - "that"
 - "them"
@@ -65,13 +61,9 @@ Use that context ONLY to resolve references such as:
 - "change its quantity"
 - "remove it"
 - "delete that"
-
 Do NOT treat previous context as a new user request.
-
 The CURRENT user message always takes priority.
-
 Rules:
-
 1. Identify EVERY distinct action requested by the CURRENT user.
 2. A single user message may contain multiple actions.
 3. Each action must have exactly ONE domain.
@@ -90,89 +82,61 @@ Rules:
     context, classify the request as general and explain the ambiguity
     in the action description rather than inventing an entity.
 Reminder rules:
-
 13. A request beginning with or containing "remind me", "remind mom",
     "remind [person]", "set a reminder", or equivalent is a tasks action.
-
 14. "Remind me to X" should create a task with X as the task title
     and a reminder time.
-
 15. "Remind [person] to/about X" should create a task with the
     specified household member as assigned_to when that identity can
     be resolved.
-
 16. Relative time expressions such as "tomorrow", "this Saturday",
     "in 2 hours", "in the morning", and "tomorrow evening" must be
     preserved in the action description for the specialist to resolve.
-
 17. Do not classify a reminder as a calendar event unless the user
     explicitly requests an event/calendar appointment.
-
 Inventory rules:
-
 18. "Add X to inventory" means add an existing/stocked household item
     using add_inventory_item.
-
 19. "Add X to the grocery list" means add a shopping-list item using
     add_grocery_item.
-
 20. Never substitute a grocery action for an inventory action.
-
 Documents:
-
 21. Requests to create, view, update, or delete document metadata belong
     to the documents domain.
 Grocery examples:
-
 Previous context:
 "Add bananas to the grocery list."
 Assistant:
 "Added 1 bananas to the grocery list. Grocery item id: abc123"
-
 Current user:
 "Make it a dozen."
-
 Correct action:
-
 domain = food
 intent = Update existing grocery item quantity
 description = Update grocery item abc123 (bananas) to quantity 12.
-
 Current user:
 "Remove them."
-
 Correct action:
-
 domain = food
 intent = Delete existing grocery item
 description = Delete grocery item abc123 (bananas).
-
 Current user:
 "Add apples too."
-
 Correct action:
-
 domain = food
 intent = Add grocery item
 description = Add apples to the grocery list.
-
 Important:
 "Add apples too" creates a NEW action.
 "Make it a dozen" modifies the EXISTING referenced item.
-
 Example:
-
 User:
 "Schedule an AC repair for Saturday and log the ₹500 advance I paid."
-
 Actions:
-
 1. domain = tasks
    Schedule/create a household task for the AC repair on Saturday.
-
 2. domain = finance
    Record the ₹500 advance that has already been paid.
-
 Return only the structured plan.
 """
 

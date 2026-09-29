@@ -91,62 +91,215 @@ def embed_node(state: AgentState) -> dict:
     except Exception:
         return {"embedded":False}
 def retrieve_node(state: AgentState) -> dict:
-    """Retrieve recent conversation history for the current user/session."""
+    """
+    Retrieve conversation context using:
+
+    1. Recent SQLite conversation history
+    2. Semantic similarity search over embedded past conversations
+
+    Both are merged into state["retrieved_context"].
+
+    Semantic retrieval is RBAC-filtered by VectorStore.query().
+    """
+
     session = SessionLocal()
 
-    try:
-        query = session.query(AgentInteraction)
+    recent_context = []
+    semantic_context = []
 
-        conversation_id = state.get("conversation_id")
-        session_id = state.get("session_id")
-        user_id = state.get("user_id")
+    try:
+        # =====================================================
+        # 1. Recent conversation history from SQLite
+        # =====================================================
+
+        query = session.query(
+            AgentInteraction
+        )
+
+        conversation_id = state.get(
+            "conversation_id"
+        )
+
+        session_id = state.get(
+            "session_id"
+        )
+
+        user_id = state.get(
+            "user_id"
+        )
 
         if conversation_id:
             query = query.filter(
-                AgentInteraction.conversation_id == conversation_id
+                AgentInteraction.conversation_id
+                == conversation_id
             )
+
         else:
             query = query.filter(
-                AgentInteraction.session_id == session_id
+                AgentInteraction.session_id
+                == session_id
             )
 
             if user_id:
                 query = query.filter(
-                    AgentInteraction.user_id == user_id
+                    AgentInteraction.user_id
+                    == user_id
                 )
 
         rows = (
             query
-            .order_by(AgentInteraction.created_at.desc())
-            .limit(10)
+            .order_by(
+                AgentInteraction.created_at.desc()
+            )
+            .limit(5)
             .all()
         )
 
-        if not rows:
-            return {
-                "retrieved_context": []
-            }
-
-        # Reverse so the oldest retrieved interaction appears first.
+        # Oldest first.
         rows.reverse()
 
-        context = []
-
         for interaction in rows:
-            context.append(
+            recent_context.append(
                 (
-                    f"Previous interaction:\n"
+                    "Previous interaction:\n"
                     f"User: {interaction.message}\n"
                     f"Assistant: {interaction.response}"
                 )
             )
-        print("\n========== RETRIEVED CONTEXT ==========")
-        for item in context:
-            print(item)
-        print("=======================================\n")
-        return {
-            "retrieved_context": context
-        }
 
     finally:
         session.close()
+
+    # =========================================================
+    # 2. Semantic retrieval from Chroma
+    # =========================================================
+
+    current_message = (
+        state.get("message")
+        or ""
+    ).strip()
+
+    role_value = state.get(
+        "role",
+        "",
+    )
+
+    if current_message:
+        try:
+            from app.rag.vector_store import (
+                get_default_store,
+            )
+            from app.models.enums import (
+                HouseholdRole,
+            )
+
+            try:
+                role = HouseholdRole(
+                    role_value
+                )
+            except ValueError:
+                role = HouseholdRole.GUEST
+
+            store = get_default_store()
+
+            results = store.query(
+                current_message,
+                role=role,
+                n_results=5,
+                source_domain="conversation",
+            )
+
+            documents = (
+                results.get(
+                    "documents",
+                    []
+                )
+                or []
+            )
+
+            # Chroma returns one nested list because
+            # we send one query_text.
+            if documents:
+                documents = documents[0]
+
+            for text in documents:
+                if not text:
+                    continue
+
+                semantic_context.append(
+                    (
+                        "Semantically relevant previous "
+                        "conversation:\n"
+                        + str(text)
+                    )
+                )
+
+        except Exception as exc:
+            # Semantic retrieval should never break the agent.
+            print(
+                "\n========== SEMANTIC RETRIEVAL ERROR =========="
+            )
+            print(exc)
+            print(
+                "==============================================\n"
+            )
+
+    # =========================================================
+    # 3. Merge + deduplicate
+    # =========================================================
+
+    combined = []
+
+    seen = set()
+
+    for item in (
+        recent_context
+        + semantic_context
+    ):
+        normalized = " ".join(
+            item.casefold().split()
+        )
+
+        if normalized in seen:
+            continue
+
+        seen.add(
+            normalized
+        )
+
+        combined.append(
+            item
+        )
+
+    # Keep context bounded.
+    combined = combined[:8]
+
+    # =========================================================
+    # Debug
+    # =========================================================
+
+    print(
+        "\n========== RETRIEVED CONTEXT =========="
+    )
+
+    print(
+        "Recent:",
+        len(recent_context),
+    )
+
+    print(
+        "Semantic:",
+        len(semantic_context),
+    )
+
+    for item in combined:
+        print(item)
+        print("---")
+
+    print(
+        "=======================================\n"
+    )
+
+    return {
+        "retrieved_context": combined
+    }

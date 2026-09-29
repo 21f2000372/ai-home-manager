@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from app.ai.agents.llm import get_llm
 from app.ai.agents.state import AgentState, DEFAULT_MAX_ITERATIONS
-from app.ai.agents.tools import TOOLSETS
+from app.ai.agents.tools import get_tools_for_action
 
 
 _SYSTEM_TEMPLATE = """
@@ -179,7 +179,11 @@ def specialist_node(state: AgentState) -> dict:
             ),
         }
 
-    tools = TOOLSETS.get(domain, [])
+    tools = get_tools_for_action(
+    domain,
+    intent,
+    description,
+    )
 
     print("\n========== SPECIALIST DEBUG ==========")
     print("action index:", index)
