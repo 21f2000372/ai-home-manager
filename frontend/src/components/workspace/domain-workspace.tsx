@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CalendarDays, Check, CircleAlert, FileText, MessageCircle, Package, Plus, ShieldCheck, Sparkles, Users, WalletCards, Wrench } from 'lucide-react';
+import { CalendarRange, Check, CircleAlert, FileText, MessageCircle, Package, Plus, ShieldCheck, Sparkles, Users, WalletCards, Wrench } from 'lucide-react';
 import { Button } from '@/components/design-system/button';
 import { Card } from '@/components/design-system/card';
 import { Badge, type BadgeTone } from '@/components/design-system/badge';
@@ -8,19 +8,17 @@ import { SectionHeading } from '@/components/design-system/section-heading';
 import { documents, events, expenses, members, tasks } from '@/data/homeops-fixtures';
 import { PeoplePermissionsWorkspace } from '@/features/people-permissions/people-permissions-workspace';
 import { FinanceWorkspace as LiveFinanceWorkspace } from '@/features/finance/finance-workspace';
-import { TaskWorkspace } from '@/features/tasks-schedule/task-workspace';
-import { CalendarWorkspace } from '@/features/calendar-schedule';
+import { PlanWorkspace } from '@/features/plan';
 import { MaintenanceWorkspace } from '@/features/maintenance';
 import { type PlannedAction } from '@/features/conversation/agent-api';
 import { HouseholdChat } from '@/components/ai/household-chat';
 import { InventoryWorkspace as LiveInventoryWorkspace } from '@/features/food-inventory';
 
-type WorkspaceKind = 'people' | 'tasks' | 'calendar' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat';
+type WorkspaceKind = 'people' | 'plan' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat';
 
 const pageMeta: Record<WorkspaceKind, { eyebrow: string; description: string; icon: typeof Users }> = {
   people: { eyebrow: 'People & privacy', description: 'Manage household roles, access, and shared privacy boundaries.', icon: Users },
-  tasks: { eyebrow: 'Tasks & chores', description: 'Coordinate recurring work and make ownership visible.', icon: Check },
-  calendar: { eyebrow: 'Schedule & events', description: 'Keep family plans, travel, and guest arrivals in one timeline.', icon: CalendarDays },
+  plan: { eyebrow: 'Tasks & schedule', description: 'Coordinate household work and commitments in one calm view.', icon: CalendarRange },
   inventory: { eyebrow: 'Food & inventory', description: 'Track household stock and turn low inventory into a grocery plan.', icon: Package },
   grocery: { eyebrow: 'Food & inventory', description: 'Organize the next household shop with verified constraints.', icon: Package },
   finance: { eyebrow: 'Finance & budget', description: 'See planned spend, expenses, bills, and the household buffer.', icon: WalletCards },
@@ -31,8 +29,7 @@ const pageMeta: Record<WorkspaceKind, { eyebrow: string; description: string; ic
 
 const actionLabels: Record<WorkspaceKind, string> = {
   people: 'Invite member',
-  tasks: 'Add task',
-  calendar: 'Add event',
+  plan: 'Add task',
   inventory: 'Add item',
   grocery: 'Add item',
   finance: 'Add expense',
@@ -43,6 +40,7 @@ const actionLabels: Record<WorkspaceKind, string> = {
 
 export function DomainWorkspace({ kind }: { kind: WorkspaceKind }) {
   if (kind === 'people') return <PeoplePermissionsWorkspace />;
+  if (kind === 'plan') return <PlanWorkspace />;
   if (kind === 'finance') return <LiveFinanceWorkspace />;
   if (kind === 'inventory') return <LiveInventoryWorkspace showGrocery={false} />;
   if (kind === 'grocery') return <LiveInventoryWorkspace showGrocery />;
@@ -54,8 +52,7 @@ export function DomainWorkspace({ kind }: { kind: WorkspaceKind }) {
 function renderWorkspace(kind: WorkspaceKind) {
   switch (kind) {
     case 'people': return <PeopleWorkspace />;
-    case 'tasks': return <TaskWorkspace />;
-    case 'calendar': return <CalendarWorkspace />;
+    case 'plan': return <PlanWorkspace />;
     case 'finance': return <FinanceWorkspace />;
     case 'maintenance': return <MaintenanceWorkspace />;
     case 'documents': return <DocumentsWorkspace />;
