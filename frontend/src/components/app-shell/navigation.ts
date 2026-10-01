@@ -1,14 +1,28 @@
-import { CalendarRange, FileText, Home, MessageCircle, Package, Users, WalletCards, Wrench, type LucideIcon } from 'lucide-react';
+import { Bell, CalendarRange, FileText, Home, MessageCircle, Package, Users, WalletCards, Wrench, type LucideIcon } from 'lucide-react';
 
-export type NavigationItem = { to: string; label: string; icon: LucideIcon };
+export type Role = 'Admin' | 'Adult' | 'Child' | 'Guest';
+
+export type NavigationItem = { to: string; label: string; icon: LucideIcon; roles: Role[] };
+
+const ALL: Role[] = ['Admin', 'Adult', 'Child', 'Guest'];
+const NON_GUEST: Role[] = ['Admin', 'Adult', 'Child'];
 
 export const navigationItems: NavigationItem[] = [
-  { to: 'overview', label: 'Overview', icon: Home },
-  { to: 'people', label: 'People', icon: Users },
-  { to: 'plan', label: 'Plan', icon: CalendarRange },
-  { to: 'inventory', label: 'Inventory', icon: Package },
-  { to: 'finance', label: 'Finance', icon: WalletCards },
-  { to: 'maintenance', label: 'Maintenance', icon: Wrench },
-  { to: 'documents', label: 'Documents', icon: FileText },
-  { to: 'chat', label: 'AI assistant', icon: MessageCircle },
+  // Guests get a single, dedicated dashboard and nothing else.
+  { to: 'dashboard', label: 'Dashboard', icon: Bell, roles: ['Guest'] },
+
+  { to: 'overview', label: 'Overview', icon: Home, roles: NON_GUEST },
+  { to: 'people', label: 'People', icon: Users, roles: ['Admin', 'Adult'] },
+  { to: 'plan', label: 'Plan', icon: CalendarRange, roles: NON_GUEST },
+  { to: 'inventory', label: 'Inventory', icon: Package, roles: NON_GUEST },
+  { to: 'finance', label: 'Finance', icon: WalletCards, roles: ['Admin', 'Adult'] },
+  { to: 'maintenance', label: 'Maintenance', icon: Wrench, roles: NON_GUEST },
+  { to: 'documents', label: 'Documents', icon: FileText, roles: NON_GUEST },
+  { to: 'chat', label: 'AI assistant', icon: MessageCircle, roles: ALL },
 ];
+
+/** Navigation items visible to a given role. */
+export function navigationItemsForRole(role: Role | undefined): NavigationItem[] {
+  if (!role) return [];
+  return navigationItems.filter((item) => item.roles.includes(role));
+}

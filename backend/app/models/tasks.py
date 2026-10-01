@@ -10,11 +10,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, _uuid_str, utcnow
 from app.models.enums import Priority, TaskStatus
+from app.models.people import User
+
+event_attendees = Table(
+    "event_attendees",
+    Base.metadata,
+    Column("event_id", String(36), ForeignKey("calendar_events.event_id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class RecurrenceRule(Base):
@@ -64,6 +72,12 @@ class Task(Base):
         ForeignKey("recurrence_rules.rule_id", ondelete="SET NULL"), nullable=True
     )
 
+    assignee: Mapped[Optional["User"]] = relationship(
+        "User", 
+        foreign_keys=[assigned_to],
+        lazy="selectin"  
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     recurrence_rule: Mapped[Optional["RecurrenceRule"]] = relationship(back_populates="tasks")
@@ -92,6 +106,10 @@ class CalendarEvent(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    
+    attendees: Mapped[list["User"]] = relationship(
+        "User", secondary=event_attendees, backref="calendar_events"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"<CalendarEvent {self.title!r} {self.starts_at}>"

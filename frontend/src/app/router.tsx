@@ -1,9 +1,12 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { RequireSession } from '@/app/require-session';
 import { AppShell } from '@/components/app-shell/app-shell';
 import { WorkspacePage } from '@/components/workspace/workspace-page';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { JoinHouseholdScreen } from '@/features/auth/join-household-screen';
+import { GuestDashboardWorkspace } from '@/features/guest-dashboard';
+import { useSessionStore } from '@/stores/session-store';
 
 const workspaceRoutes = [
   { path: 'overview', label: 'Overview', eyebrow: 'Household pulse' },
@@ -19,6 +22,20 @@ const workspaceRoutes = [
   { path: 'chat', label: 'AI assistant', eyebrow: 'Conversation workspace' },
 ];
 
+/** Landing route inside a tenant: guests go to their dashboard, others to overview. */
+function TenantIndexRedirect() {
+  const role = useSessionStore((state) => state.user?.role);
+  return <Navigate to={role === 'Guest' ? 'dashboard' : 'overview'} replace />;
+}
+
+/** Blocks Guests from non-dashboard workspace routes. */
+function GuestGuardedRoute({ children }: { children: ReactNode }) {
+  const role = useSessionStore((state) => state.user?.role);
+  const { tenantId } = useParams();
+  if (role === 'Guest') return <Navigate to={`/t/${tenantId}/dashboard`} replace />;
+  return <>{children}</>;
+}
+
 export function Router() {
   return (
     <Routes>
@@ -26,9 +43,14 @@ export function Router() {
       <Route path="/join" element={<JoinHouseholdScreen />} />
       <Route element={<RequireSession />}>
         <Route path="/t/:tenantId" element={<AppShell />}>
-          <Route index element={<Navigate to="overview" replace />} />
+          <Route index element={<TenantIndexRedirect />} />
+          <Route path="dashboard" element={<GuestDashboardWorkspace />} />
           {workspaceRoutes.map((route) => (
-            <Route key={route.path} path={route.path} element={<WorkspacePage {...route} />} />
+            <Route
+              key={route.path}
+              path={route.path}
+              element={<GuestGuardedRoute><WorkspacePage {...route} /></GuestGuardedRoute>}
+            />
           ))}
         </Route>
       </Route>

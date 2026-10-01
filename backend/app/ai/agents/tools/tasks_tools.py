@@ -39,6 +39,57 @@ def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
         )
 
 
+def _resolve_task_id(session, task_ref: str) -> Optional[str]:
+    """Resolve a full task_id OR a compact reference (id prefix) to a task_id.
+
+    The list output shows a short 'ref' (first 8 chars of the id) for
+    readability; this lets follow-up actions accept either the full id or
+    that short ref. Returns None if nothing matches, or raises if ambiguous.
+    """
+    task_ref = (task_ref or "").strip()
+    if not task_ref:
+        return None
+    # Exact full-id match first.
+    exact = session.query(Task).filter(Task.task_id == task_ref).first()
+    if exact:
+        return exact.task_id
+    # Otherwise treat it as an id prefix (the compact ref).
+    matches = session.query(Task).filter(Task.task_id.like(f"{task_ref}%")).all()
+    if len(matches) == 1:
+        return matches[0].task_id
+    if len(matches) > 1:
+        raise ValueError(f"Reference '{task_ref}' matches multiple tasks; use the full id.")
+    return None
+
+
+def _member_names(session, user_ids) -> dict:
+    """Map a set of user_ids to display names for readable task output."""
+    ids = {uid for uid in user_ids if uid}
+    if not ids:
+        return {}
+    rows = session.query(User).filter(User.user_id.in_(ids)).all()
+    return {u.user_id: u.display_name for u in rows}
+
+
+def _friendly_datetime(value) -> str:
+    """Render a datetime as a short, human-readable string (e.g. 'Oct 4, 9:30 AM')."""
+    if value is None:
+        return ""
+    try:
+        has_time = value.hour or value.minute
+        if has_time:
+            return value.strftime("%b %-d, %-I:%M %p")
+        return value.strftime("%b %-d")
+    except (ValueError, AttributeError):
+        # Windows strftime does not support %-d / %-I; fall back gracefully.
+        try:
+            if value.hour or value.minute:
+                return value.strftime("%b %d, %I:%M %p").replace(" 0", " ")
+            return value.strftime("%b %d").replace(" 0", " ")
+        except Exception:
+            return str(value)
+
+
 def _resolve_assignee(session, assignee: str) -> Optional[str]:
     """Resolve a task assignee (a name or user_id) to a household user_id.
 
@@ -182,26 +233,39 @@ def list_tasks(status: str = "") -> str:
         if not rows:
             return "No tasks found."
 
-        result = []
+        # Resolve assignee ids -> names in one query for readable output.
+        names = _member_names(session, [t.assigned_to for t in rows])
 
+        # Group tasks by status for a structured, scannable list.
+        groups: dict[str, list[str]] = {}
         for task in rows:
-            line = (
-                f"- [{task.status.value}] "
-                f"{task.title} "
-                f"(id={task.task_id})"
-            )
-
+            parts = [f"• {task.title}"]
             if task.due_at:
-                line += f", due={task.due_at.isoformat()}"
-
-            
-
+                parts.append(f"due {_friendly_datetime(task.due_at)}")
             if task.assigned_to:
-                line += f", assigned_to={task.assigned_to}"
+                parts.append(f"assigned to {names.get(task.assigned_to, 'a household member')}")
+            # Compact reference (short id) so the user/agent can act on it later.
+            line = " — ".join([parts[0]] + parts[1:]) if len(parts) > 1 else parts[0]
+            line += f"  (ref {task.task_id[:8]})"
+            groups.setdefault(task.status.value, []).append(line)
 
-            result.append(line)
+        # Present statuses in a sensible order.
+        order = [TaskStatus.OPEN.value, TaskStatus.IN_PROGRESS.value,
+                 TaskStatus.DONE.value, TaskStatus.CANCELLED.value]
+        labels = {
+            TaskStatus.OPEN.value: "Open",
+            TaskStatus.IN_PROGRESS.value: "In progress",
+            TaskStatus.DONE.value: "Done",
+            TaskStatus.CANCELLED.value: "Cancelled",
+        }
 
-        return "\n".join(result)
+        sections = ["Here are the household tasks:"]
+        for status_value in order:
+            if groups.get(status_value):
+                sections.append(f"\n{labels[status_value]}")
+                sections.extend(groups[status_value])
+
+        return "\n".join(sections)
 
     finally:
         session.close()
@@ -209,11 +273,12 @@ def list_tasks(status: str = "") -> str:
 
 @tool
 def get_task(task_id: str) -> str:
-    """Get one task by stable task id."""
+    """Get one task by its id or compact reference."""
     session = SessionLocal()
 
     try:
-        task = session.get(Task, task_id)
+        resolved_id = _resolve_task_id(session, task_id)
+        task = session.get(Task, resolved_id) if resolved_id else None
 
         if not task:
             return f"No task found with id {task_id}."
@@ -251,11 +316,12 @@ def update_task(
     priority: Optional[str] = None,
     status: Optional[str] = None,
 ) -> str:
-    """Update an existing task by stable task id."""
+    """Update an existing task by its id or compact reference."""
     session = SessionLocal()
 
     try:
-        task = session.get(Task, task_id)
+        resolved_id = _resolve_task_id(session, task_id)
+        task = session.get(Task, resolved_id) if resolved_id else None
 
         if not task:
             return f"No task found with id {task_id}."
@@ -327,11 +393,12 @@ def update_task(
 
 @tool
 def delete_task(task_id: str) -> str:
-    """Delete an existing task by stable task id."""
+    """Delete an existing task by its id or compact reference."""
     session = SessionLocal()
 
     try:
-        task = session.get(Task, task_id)
+        resolved_id = _resolve_task_id(session, task_id)
+        task = session.get(Task, resolved_id) if resolved_id else None
 
         if not task:
             return f"No task found with id {task_id}."
