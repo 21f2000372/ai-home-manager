@@ -1,0 +1,50 @@
+{
+  "doc_id": "hwg_24",
+  "file": "hwg_24.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "medium",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "sugar",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "wheat flour",
+        "qty": 5,
+        "unit": "kg"
+      },
+      {
+        "name": "cooking oil",
+        "qty": 2,
+        "unit": "l"
+      },
+      {
+        "name": "paneer",
+        "qty": null,
+        "unit": null
+      },
+      {
+        "name": "rice",
+        "qty": 1,
+        "unit": "kg"
+      },
+      {
+        "name": "tea powder",
+        "qty": 500,
+        "unit": "g"
+      }
+    ]
+  },
+  "unreadable": [
+    "items[3].qty",
+    "items[3].unit"
+  ],
+  "should_clarify": true,
+  "crossed_out_items": [],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

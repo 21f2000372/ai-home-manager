@@ -1,0 +1,57 @@
+{
+  "doc_id": "inv_07",
+  "file": "inv_07.jpg",
+  "category": "printed_invoice",
+  "difficulty": "hard",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "Hillview Appliance Hub",
+    "invoice_number": "INV-5261",
+    "date": "2026-08-12",
+    "items": [
+      {
+        "name": "Refrigerator gas top-up",
+        "qty": 1,
+        "rate": 2200,
+        "amount": 2200.0
+      },
+      {
+        "name": "Tap replacement",
+        "qty": 1,
+        "rate": 1200,
+        "amount": 1200.0
+      },
+      {
+        "name": "Gas refill",
+        "qty": 3,
+        "rate": 950,
+        "amount": 2850.0
+      },
+      {
+        "name": "Mixer grinder repair",
+        "qty": 3,
+        "rate": 650,
+        "amount": 1950.0
+      },
+      {
+        "name": "Water purifier filter",
+        "qty": 2,
+        "rate": 2400,
+        "amount": 4800.0
+      },
+      {
+        "name": "AC servicing",
+        "qty": 3,
+        "rate": 1800,
+        "amount": 5400.0
+      }
+    ],
+    "subtotal": 18400.0,
+    "tax": 3312.0,
+    "total": 21712.0,
+    "payment_status": "paid",
+    "due_date": null
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

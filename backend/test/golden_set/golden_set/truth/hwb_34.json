@@ -1,0 +1,39 @@
+{
+  "doc_id": "hwb_34",
+  "file": "hwb_34.jpg",
+  "category": "handwritten_bill",
+  "difficulty": "medium",
+  "doc_type": "bill",
+  "facts": {
+    "vendor": "GreenLeaf Organics",
+    "date": "2026-06-04",
+    "items": [
+      {
+        "name": "Refrigerator gas top-up",
+        "amount": 2200.0
+      },
+      {
+        "name": "Gas refill",
+        "amount": 950.0
+      },
+      {
+        "name": "Labour charges",
+        "amount": 500.0
+      },
+      {
+        "name": "Mixer grinder repair",
+        "amount": 650.0
+      },
+      {
+        "name": "Tap replacement",
+        "amount": 1200.0
+      }
+    ],
+    "total": 5500.0
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {
+    "note": "A bill is not a recorded payment. Use corrected amounts, not struck-through ones."
+  }
+}

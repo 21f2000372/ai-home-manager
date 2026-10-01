@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image
 
 from app.config import config
-from typing import Optional
+
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {
     ".pdf",
@@ -144,13 +148,17 @@ def _validate_pdf(
             file_size=file_size,
         )
 
-    except Exception as exc:
+    except Exception:
+        logger.exception(
+            "PDF content validation failed for %s",
+            path.name,
+        )
         return FileValidationResult(
             valid=False,
             filename=path.name,
             extension=".pdf",
             file_size=file_size,
-            reason=f"Unable to read PDF: {exc}",
+            reason="The PDF could not be read safely.",
         )
 
 

@@ -24,6 +24,7 @@ IMAGE_EXTENSIONS = {
 
 MIN_EMBEDDED_TEXT_LENGTH = 30
 OCR_CONFIDENCE_THRESHOLD = 0.20
+SECURITY_OCR_CONFIDENCE_THRESHOLD = 0.02
 PDF_RENDER_SCALE = 2
 
 # Most correctly-oriented document images should need only one OCR pass.
@@ -41,6 +42,10 @@ class TextExtractionResult:
     method: str
     page_count: int = 1
     reason: Optional[str] = None
+    # Low-confidence OCR is scanned only by deterministic security
+    # guardrails. It must never be used as document facts or persisted as the
+    # approved extraction.
+    security_text: str = ""
 
 
 # Create the OCR reader once per application process. gpu=False keeps the
@@ -223,6 +228,7 @@ def _extract_image(path: Path) -> TextExtractionResult:
         with Image.open(str(path)) as source_image:
             image = _apply_exif_orientation(source_image)
             text = _extract_best_orientation_text(image)
+            security_text = _extract_security_ocr_text(image)
 
         if not text:
             return TextExtractionResult(
@@ -241,6 +247,7 @@ def _extract_image(path: Path) -> TextExtractionResult:
             ),
             method="image_ocr",
             page_count=1,
+            security_text=security_text,
         )
 
     except Exception:
@@ -356,6 +363,50 @@ def _preprocess_image(
     return grayscale.point(
         lambda pixel: 0 if pixel < 180 else 255
     )
+
+
+def _extract_security_ocr_text(
+    image: Image.Image,
+) -> str:
+    """Return low-confidence OCR solely for injection detection.
+
+    The primary OCR applies a binary threshold and discards low-confidence
+    text to protect document facts from noise. Handwritten attack text can be
+    faint enough to disappear under those rules, so this independent pass
+    uses grayscale autocontrast and a much lower confidence floor. Callers
+    must not expose, persist, classify, summarize, or derive actions from this
+    value.
+    """
+
+    grayscale = ImageOps.grayscale(image)
+    processed_image = ImageOps.autocontrast(grayscale)
+    image_array = np.array(processed_image)
+
+    with _OCR_LOCK:
+        results = _OCR_READER.readtext(
+            image_array,
+            detail=1,
+            paragraph=False,
+        )
+
+    lines: List[str] = []
+
+    for _box, text, confidence in results:
+        normalized_text = str(text).strip()
+        if not normalized_text:
+            continue
+
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+
+        if confidence_value < SECURITY_OCR_CONFIDENCE_THRESHOLD:
+            continue
+
+        lines.append(normalized_text)
+
+    return "\n".join(lines).strip()
 
 
 def _easyocr_image(

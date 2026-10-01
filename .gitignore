@@ -272,17 +272,16 @@ test_*.py
 make_test_*.py
 
 # Test directories / fixtures
-tests/
-golden_set/
+
 
 # ---------------------------------------------------------
 # Generated document test artifacts
 # ---------------------------------------------------------
-
+document_*.json
 # Base64 payload dumps
 *.base64.txt
 *_base64.txt
-
+test_memory_scope_result.txt
 # Generated test PDFs
 *_test.pdf
 *_test_*.pdf

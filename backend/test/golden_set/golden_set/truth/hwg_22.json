@@ -1,0 +1,47 @@
+{
+  "doc_id": "hwg_22",
+  "file": "hwg_22.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "easy",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "curd",
+        "qty": 500,
+        "unit": "g"
+      },
+      {
+        "name": "rice",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "tomatoes",
+        "qty": 0.5,
+        "unit": "kg"
+      },
+      {
+        "name": "tea powder",
+        "qty": 500,
+        "unit": "g"
+      },
+      {
+        "name": "toor dal",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "paneer",
+        "qty": 200,
+        "unit": "g"
+      }
+    ]
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "crossed_out_items": [],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

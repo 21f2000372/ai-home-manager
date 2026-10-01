@@ -1,0 +1,20 @@
+{
+  "doc_id": "war_12",
+  "file": "war_12.pdf",
+  "category": "warranty_card",
+  "difficulty": "easy",
+  "doc_type": "warranty",
+  "facts": {
+    "brand": "Aerolux",
+    "product": "Mixer Grinder",
+    "model": "K784",
+    "serial": "SN95283083",
+    "purchase_date": "2026-04-08",
+    "warranty_months": 12,
+    "installation_date": "2026-04-10",
+    "expiry_date": "2027-04-08"
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {}
+}

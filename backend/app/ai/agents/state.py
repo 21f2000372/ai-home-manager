@@ -43,8 +43,18 @@ class PlannedAction(TypedDict, total=False):
     # pending -> running -> completed / failed / unauthorized / cancelled
     status: str
 
-    # Human-readable result returned by the current tool layer.
+    # Raw tool result kept for server-side chaining, audit, and follow-ups.
+    # It may contain stable internal identifiers and must not be exposed
+    # directly to the user.
     result: Optional[str]
+
+    # Natural, frontend-safe description of the action outcome. This should
+    # name the resource in human terms and never expose internal UUIDs.
+    display_result: Optional[str]
+
+    # Provenance for loop prevention / cross-domain orchestration.
+    # explicit | cross_domain_suggestion | cross_domain_suggestion_continuation
+    origin: Optional[str]
 
 
 class AgentState(TypedDict, total=False):
@@ -134,6 +144,17 @@ class AgentState(TypedDict, total=False):
     consistency_results: List[Dict[str, Any]]
 
     # ------------------------------------------------------------------
+    # Cross-domain follow-up suggestion state
+    # ------------------------------------------------------------------
+
+    # Frontend-safe current suggestion generated from completed tool actions.
+    active_suggestion: Optional[Dict[str, Any]]
+
+    # Trusted server-side context carried into a user-accepted follow-up.
+    # This is never accepted directly from client input.
+    suggestion_context: Optional[Dict[str, Any]]
+
+    # ------------------------------------------------------------------
     # Confirmation / durable-review handoff
     # ------------------------------------------------------------------
 
@@ -143,7 +164,7 @@ class AgentState(TypedDict, total=False):
     # none | confirmed | cancelled | edit | edit_prompt | error
     confirmation_resolution: Optional[str]
 
-    # none | duplicate | document
+    # none | duplicate | conflict | action | document | suggestion
     confirmation_kind: Optional[str]
 
     # Durable proposal identifier.

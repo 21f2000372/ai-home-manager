@@ -1,0 +1,22 @@
+{
+  "doc_id": "war_13",
+  "file": "war_13.pdf",
+  "category": "warranty_card",
+  "difficulty": "medium",
+  "doc_type": "warranty",
+  "facts": {
+    "brand": "Zenova",
+    "product": "Air Cooler",
+    "model": "X658",
+    "serial": "SN39920845",
+    "purchase_date": "2026-03-01",
+    "warranty_months": 24,
+    "installation_date": null,
+    "expiry_date": null
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {
+    "note": "Coverage dates absent from the card must stay null; do not compute them."
+  }
+}

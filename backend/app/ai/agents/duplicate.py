@@ -274,6 +274,8 @@ def duplicate_check_node(
         confirmation_kind = "duplicate"
     elif status == "CONFLICT":
         confirmation_kind = "conflict"
+    elif state.get("confirmation_kind") == "suggestion":
+        confirmation_kind = "suggestion"
     else:
         confirmation_kind = "action"
 
@@ -302,5 +304,8 @@ def route_after_duplicate(
         or state.get("force_action_review")
     ):
         return "request_confirmation"
+
+    if state.get("confirmation_resolution") == "suggestion_confirmed":
+        return "suggestion_approve"
 
     return "authorize"

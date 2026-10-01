@@ -1,0 +1,37 @@
+{
+  "doc_id": "hwb_33",
+  "file": "hwb_33.jpg",
+  "category": "handwritten_bill",
+  "difficulty": "hard",
+  "doc_type": "bill",
+  "facts": {
+    "vendor": "Anand Kirana Store",
+    "date": "2026-01-18",
+    "items": [
+      {
+        "name": "Water purifier filter",
+        "amount": 2400.0
+      },
+      {
+        "name": "AC servicing",
+        "amount": 1800.0
+      },
+      {
+        "name": "Tap replacement",
+        "amount": 1200.0
+      },
+      {
+        "name": "Geyser element replacement",
+        "amount": 1750.0
+      }
+    ],
+    "total": null
+  },
+  "unreadable": [
+    "total"
+  ],
+  "should_clarify": true,
+  "expected_behavior": {
+    "note": "A bill is not a recorded payment. Use corrected amounts, not struck-through ones."
+  }
+}

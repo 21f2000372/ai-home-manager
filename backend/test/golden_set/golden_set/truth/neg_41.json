@@ -1,0 +1,11 @@
+{
+  "doc_id": "neg_41",
+  "file": "neg_41.jpg",
+  "category": "unreadable",
+  "difficulty": "hard",
+  "doc_type": "invoice",
+  "facts": {},
+  "unreadable": [],
+  "should_clarify": true,
+  "expect_no_facts": true
+}

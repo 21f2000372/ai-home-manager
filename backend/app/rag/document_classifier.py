@@ -3,11 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import unicodedata
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Set, Tuple
 
 
 @dataclass
 class ClassificationResult:
+    domain: str
+    document_type: str
+    confidence: float
+    reason: str
+
+
+@dataclass(frozen=True)
+class PageClassification:
+    """Deterministic classification evidence for one extracted page.
+
+    The whole-document ``ClassificationResult`` remains the public routing
+    result. Page evidence exists so the authorization boundary does not lose
+    a more restrictive domain when a multi-page bundle contains several
+    document types.
+    """
+
+    page_number: int
     domain: str
     document_type: str
     confidence: float
@@ -87,6 +104,61 @@ TRANSACTION_MARKERS: Set[str] = {
 BILL_MARKERS: Set[str] = {
     "bill", "invoice", "amount due", "due date", "payment due",
 }
+
+
+SUPPORTED_AUTHORIZATION_DOMAINS: Set[str] = {
+    "Finance",
+    "Food",
+    "Maintenance",
+    "Tasks",
+}
+
+PAGE_MARKER_RE = re.compile(
+    r"^\s*---\s*page\s+(\d+)\s*---\s*$",
+    flags=re.I | re.M,
+)
+
+MIN_PAGE_AUTHORIZATION_CONFIDENCE = 0.60
+
+
+def split_document_pages(text: str) -> List[Tuple[int, str]]:
+    """Split extractor output without treating page markers as content.
+
+    Extractors emit ``--- Page N ---`` markers. If no marker is present, the
+    input is treated as one page, preserving compatibility with callers that
+    classify plain OCR text directly.
+    """
+
+    source = str(text or "")
+    matches = list(PAGE_MARKER_RE.finditer(source))
+
+    if not matches:
+        return [(1, source)] if source.strip() else []
+
+    pages: List[Tuple[int, str]] = []
+    prefix = source[: matches[0].start()].strip()
+    if prefix:
+        pages.append((1, prefix))
+
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = (
+            matches[index + 1].start()
+            if index + 1 < len(matches)
+            else len(source)
+        )
+        page_text = source[start:end].strip()
+        if not page_text:
+            continue
+
+        try:
+            page_number = int(match.group(1))
+        except (TypeError, ValueError):
+            page_number = index + 1
+
+        pages.append((page_number, page_text))
+
+    return pages
 
 
 def _normalize_ocr_text(text: str) -> str:
@@ -353,3 +425,60 @@ def classify_document(text: str) -> ClassificationResult:
         confidence=0.40,
         reason="Document could not be confidently classified.",
     )
+
+
+def classify_document_pages(text: str) -> List[PageClassification]:
+    """Classify each readable page independently.
+
+    This function never promotes an ambiguous page into a supported domain.
+    Callers can therefore use the results as additional restrictive evidence,
+    while continuing to use ``classify_document`` for the primary document
+    type and user-facing summary.
+    """
+
+    results: List[PageClassification] = []
+
+    for page_number, page_text in split_document_pages(text):
+        classification = classify_document(page_text)
+        results.append(
+            PageClassification(
+                page_number=page_number,
+                domain=classification.domain,
+                document_type=classification.document_type,
+                confidence=classification.confidence,
+                reason=classification.reason,
+            )
+        )
+
+    return results
+
+
+def authorization_domains(
+    text: str,
+    min_confidence: float = MIN_PAGE_AUTHORIZATION_CONFIDENCE,
+) -> Set[str]:
+    """Return supported domains that must participate in upload RBAC.
+
+    For multi-page documents, every confidently classified page contributes
+    its domain. For unmarked/single-page documents, this is equivalent to the
+    existing whole-document classification. ``NeedsReview``, ``Unknown``, and
+    irrelevant classifications are intentionally not converted into a domain;
+    the existing fail-closed unclassified policy remains responsible for them.
+    """
+
+    try:
+        threshold = float(min_confidence)
+    except (TypeError, ValueError):
+        threshold = MIN_PAGE_AUTHORIZATION_CONFIDENCE
+
+    threshold = max(0.0, min(threshold, 1.0))
+    domains: Set[str] = set()
+
+    for page in classify_document_pages(text):
+        if (
+            page.domain in SUPPORTED_AUTHORIZATION_DOMAINS
+            and page.confidence >= threshold
+        ):
+            domains.add(page.domain)
+
+    return domains

@@ -1,0 +1,34 @@
+{
+  "doc_id": "man_16",
+  "file": "man_16.pdf",
+  "category": "manual",
+  "difficulty": "easy",
+  "doc_type": "manual",
+  "facts": {
+    "brand": "Zenova",
+    "product": "Water Heater",
+    "model": "M152",
+    "rated_power_w": 2000,
+    "rated_voltage_v": 230,
+    "capacity_l": 15
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "qa": [
+    {
+      "q": "What should I do if: unit does not start?",
+      "a": "Check the socket and reset the overload protector"
+    },
+    {
+      "q": "What should I do if: water leaks from the base?",
+      "a": "Stop using the unit and replace the seal"
+    },
+    {
+      "q": "What is the rated power?",
+      "a": "2000 W"
+    }
+  ],
+  "expected_behavior": {
+    "note": "Index for Q&A. Do not propose tasks."
+  }
+}

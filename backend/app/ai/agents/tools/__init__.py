@@ -118,14 +118,13 @@ _ACTION_TOOL_HINTS = {
         "delete_repair",
         "list_repairs",
     ],
-
     "document": [
-        "create_document",
+        "search_documents",
         "get_document",
-        "update_document",
-        "delete_document",
-        "list_documents",
+        "get_original_document",
     ],
+
+    
 }
 
 

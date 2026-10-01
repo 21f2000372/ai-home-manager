@@ -1,0 +1,49 @@
+{
+  "doc_id": "hwg_23",
+  "file": "hwg_23.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "medium",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "cooking oil",
+        "qty": 5,
+        "unit": "l"
+      },
+      {
+        "name": "potatoes",
+        "qty": 3,
+        "unit": "kg"
+      },
+      {
+        "name": "tea powder",
+        "qty": 500,
+        "unit": "g"
+      },
+      {
+        "name": "sugar",
+        "qty": 1,
+        "unit": "kg"
+      },
+      {
+        "name": "milk",
+        "qty": 1,
+        "unit": "l"
+      },
+      {
+        "name": "bread",
+        "qty": 2,
+        "unit": "pcs"
+      }
+    ]
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "crossed_out_items": [
+    "toor dal"
+  ],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

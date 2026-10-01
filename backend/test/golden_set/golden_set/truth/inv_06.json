@@ -1,0 +1,45 @@
+{
+  "doc_id": "inv_06",
+  "file": "inv_06.jpg",
+  "category": "printed_invoice",
+  "difficulty": "medium",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "Home Care Plumbing",
+    "invoice_number": "INV-6040",
+    "date": "2026-05-18",
+    "items": [
+      {
+        "name": "Labour charges",
+        "qty": 3,
+        "rate": 500,
+        "amount": 1500.0
+      },
+      {
+        "name": "Gas refill",
+        "qty": 2,
+        "rate": 950,
+        "amount": 1900.0
+      },
+      {
+        "name": "AC servicing",
+        "qty": 3,
+        "rate": 1800,
+        "amount": 5400.0
+      },
+      {
+        "name": "Tap replacement",
+        "qty": 3,
+        "rate": 1200,
+        "amount": 3600.0
+      }
+    ],
+    "subtotal": 12400.0,
+    "tax": 2232.0,
+    "total": 14632.0,
+    "payment_status": "paid",
+    "due_date": null
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

@@ -175,6 +175,20 @@ TOOL_PERMISSIONS: Dict[Tuple[str, str], HouseholdRole] = {
 
 DEFAULT_MIN_ROLE = HouseholdRole.ADULT
 
+# Read-only document retrieval is authorized from the actual document's
+# resolved min_role at retrieval time, not from the model-declared action
+# domain. This prevents a generic ``documents -> Adult`` gate from blocking a
+# Child from reading Food/Maintenance/Tasks documents while still keeping
+# Finance Adult+. Guest may search/read only content whose resolved min_role is
+# Guest, but original-file download is never allowed for Guest.
+DOCUMENT_READ_TOOLS = {
+    "search_documents",
+    "get_document",
+}
+DOCUMENT_DOWNLOAD_TOOLS = {
+    "get_original_document",
+}
+
 # Minimum role required to *retrieve* an embedded interaction from a given
 # domain, keyed by domain rather than by whoever happened to be logged in
 # when it was said. Kept separate from TOOL_PERMISSIONS because retrieval
@@ -195,9 +209,31 @@ def is_authorized(
     domain: str,
     tool_name: str,
 ) -> bool:
-    """Return True if the user's role may execute this tool in this domain."""
+    """Return True if the user's role may execute this tool in this domain.
 
-    # 1. Verify that the tool belongs to the routed domain.
+    Read-only document retrieval is a special case: the model-proposed action
+    domain is not trusted as the document authorization boundary. The
+    retrieval layer resolves the actual document and enforces its min_role.
+    """
+
+    # 1. Validate the user's role before any special-case authorization.
+    try:
+        role = HouseholdRole(role_value)
+    except (TypeError, ValueError):
+        return False
+
+    # 2. Read-only document access is authorized against the actual document
+    # inside app.rag.document_retrieval. Allow the call to reach that gate.
+    if tool_name in DOCUMENT_READ_TOOLS:
+        return True
+
+    # Guest can never receive an original-document download link. Child, Adult
+    # and Admin may reach the retrieval layer, which still enforces the actual
+    # document's min_role before generating a signed URL.
+    if tool_name in DOCUMENT_DOWNLOAD_TOOLS:
+        return role != HouseholdRole.GUEST
+
+    # 3. Verify that every other tool belongs to the routed domain.
     tool_domain = TOOL_DOMAINS.get(tool_name)
 
     if tool_domain is None:
@@ -208,13 +244,7 @@ def is_authorized(
         # Tool/domain mismatch fails closed.
         return False
 
-    # 2. Validate the user's role.
-    try:
-        role = HouseholdRole(role_value)
-    except ValueError:
-        return False
-
-    # 3. Check the minimum role for this domain/tool pair.
+    # 4. Check the minimum role for this domain/tool pair.
     min_role = TOOL_PERMISSIONS.get(
         (domain, tool_name),
         DEFAULT_MIN_ROLE,
@@ -268,3 +298,29 @@ def can_upload_document(
     min_role = domain_min_role(normalized_domain)
 
     return ROLE_RANK[role] >= ROLE_RANK[min_role]
+
+
+def can_review_unclassified_document(
+    role_value: str,
+) -> bool:
+    """Allow ambiguous intake only for roles authorized in every domain.
+
+    A low-confidence classifier cannot safely choose a domain-specific RBAC
+    rule. The upload may continue to explicit human review only when the
+    caller could upload a document in *all* supported document domains. This
+    currently limits the path to Adult/Admin without hard-coding role names.
+
+    This permission does not approve permanent storage or any derived action.
+    Irrelevant and unsupported classifications are rejected before this policy
+    is consulted.
+    """
+
+    return all(
+        can_upload_document(
+            role_value,
+            domain,
+        )
+        for domain in sorted(
+            SUPPORTED_DOCUMENT_UPLOAD_DOMAINS
+        )
+    )

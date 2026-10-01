@@ -1,0 +1,35 @@
+{
+  "doc_id": "hwb_30",
+  "file": "hwb_30.jpg",
+  "category": "handwritten_bill",
+  "difficulty": "easy",
+  "doc_type": "bill",
+  "facts": {
+    "vendor": "Sri Lakshmi Traders",
+    "date": "2026-06-09",
+    "items": [
+      {
+        "name": "Gas refill",
+        "amount": 950.0
+      },
+      {
+        "name": "Mixer grinder repair",
+        "amount": 650.0
+      },
+      {
+        "name": "AC servicing",
+        "amount": 1800.0
+      },
+      {
+        "name": "Labour charges",
+        "amount": 500.0
+      }
+    ],
+    "total": 3900.0
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {
+    "note": "A bill is not a recorded payment. Use corrected amounts, not struck-through ones."
+  }
+}

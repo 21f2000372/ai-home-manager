@@ -51,6 +51,13 @@ from app.ai.agents.memory import (
 )
 from app.ai.agents.planner import planner_node
 from app.ai.agents.specialist import specialist_node
+from app.ai.agents.suggestions import (
+    cross_domain_suggestion_node,
+    route_after_suggestion_approve,
+    route_after_suggestion_authorize,
+    suggestion_approve_node,
+    suggestion_authorize_node,
+)
 from app.ai.agents.state import (
     AgentState,
     DEFAULT_MAX_ITERATIONS,
@@ -90,6 +97,32 @@ def route_after_document_interpret(state: AgentState) -> str:
         return "save"
 
     return "document_checks"
+
+
+_READ_TOOL_PREFIXES = ("get_", "list_", "search_")
+
+
+def route_after_execute(state: AgentState) -> str:
+    """Avoid an unnecessary second LLM call after terminal mutations.
+
+    Read tools can be intermediate steps: the specialist may need a returned
+    row/list to resolve a later update/delete operation, so reads keep the
+    existing ReAct follow-up. Mutations already have a concrete tool outcome
+    and can be finalized deterministically by ``next_action_node``.
+    """
+
+    actions = state.get("planned_actions") or []
+    index = int(state.get("current_action_index") or 0)
+
+    if index < 0 or index >= len(actions):
+        return "next_action"
+
+    tool_name = str(actions[index].get("tool_name") or "").strip()
+
+    if tool_name.startswith(_READ_TOOL_PREFIXES):
+        return "specialist"
+
+    return "next_action"
 
 
 @lru_cache(maxsize=1)
@@ -145,6 +178,21 @@ def build_graph():
     graph.add_node(
         "next_action",
         next_action_node,
+    )
+
+    graph.add_node(
+        "cross_domain_suggestion",
+        cross_domain_suggestion_node,
+    )
+
+    graph.add_node(
+        "suggestion_authorize",
+        suggestion_authorize_node,
+    )
+
+    graph.add_node(
+        "suggestion_approve",
+        suggestion_approve_node,
     )
 
     graph.add_node(
@@ -213,6 +261,7 @@ def build_graph():
         {
             "retrieve": "retrieve",
             "authorize": "authorize",
+            "suggestion_authorize": "suggestion_authorize",
             "document_execute": "document_execute",
             "save": "save",
         },
@@ -248,6 +297,7 @@ def build_graph():
             # Keep the existing public route name. The duplicate node still
             # intercepts the call before authorization in this refactor step.
             "authorize": "duplicate_check",
+            "suggestion_authorize": "suggestion_authorize",
             "next_action": "next_action",
         },
     )
@@ -258,6 +308,7 @@ def build_graph():
         {
             "authorize": "authorize",
             "request_confirmation": "request_confirmation",
+            "suggestion_approve": "suggestion_approve",
         },
     )
 
@@ -277,11 +328,17 @@ def build_graph():
         },
     )
 
-    # Existing ReAct behavior is preserved for normal chat. `execute` writes
-    # the tool result, then the specialist gets one more turn to consume it.
-    graph.add_edge(
+    # Read tools may be intermediate lookup steps and therefore keep the
+    # existing ReAct follow-up. Mutation tools already have a concrete outcome,
+    # so they skip the redundant second specialist LLM call and go straight to
+    # deterministic action finalization.
+    graph.add_conditional_edges(
         "execute",
-        "specialist",
+        route_after_execute,
+        {
+            "specialist": "specialist",
+            "next_action": "next_action",
+        },
     )
 
     graph.add_conditional_edges(
@@ -289,7 +346,33 @@ def build_graph():
         route_after_action,
         {
             "specialist": "specialist",
-            "save": "save",
+            "cross_domain_suggestion": "cross_domain_suggestion",
+        },
+    )
+
+    # Cross-domain suggestions are generated only after the complete explicit
+    # multi-action plan finishes. The suggestion node itself never mutates a
+    # target domain; it persists one RBAC-filtered proposal for a later yes/no.
+    graph.add_edge(
+        "cross_domain_suggestion",
+        "save",
+    )
+
+    graph.add_conditional_edges(
+        "suggestion_authorize",
+        route_after_suggestion_authorize,
+        {
+            "duplicate_check": "duplicate_check",
+            "next_action": "next_action",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "suggestion_approve",
+        route_after_suggestion_approve,
+        {
+            "execute": "execute",
+            "next_action": "next_action",
         },
     )
 
@@ -398,6 +481,11 @@ def run_agent(
         # Prepared for the later shared cross-domain consistency service.
         "consistency_status": None,
         "consistency_results": [],
+
+        # Cross-domain follow-up state. Suggestions are generated only after
+        # explicit actions finish and are RBAC-filtered before disclosure.
+        "active_suggestion": None,
+        "suggestion_context": None,
 
         # Upload / proposal-based document state.
         "uploaded_file": uploaded_file,

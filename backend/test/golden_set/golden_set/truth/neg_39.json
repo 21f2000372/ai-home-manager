@@ -1,0 +1,11 @@
+{
+  "doc_id": "neg_39",
+  "file": "neg_39.jpg",
+  "category": "unreadable",
+  "difficulty": "easy",
+  "doc_type": "unreadable",
+  "facts": {},
+  "unreadable": [],
+  "should_clarify": true,
+  "expect_no_facts": true
+}

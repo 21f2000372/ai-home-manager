@@ -15,11 +15,17 @@ from typing import Any, Dict, List, Optional
 
 from werkzeug.datastructures import FileStorage
 
-from app.ai.agents.permissions import can_upload_document
+from app.ai.agents.permissions import (
+    can_review_unclassified_document,
+    can_upload_document,
+)
 from app.db.base import SessionLocal
 from app.models.documents import PendingDocumentUpload
 from app.rag.content_guardrails import check_untrusted_document_text
-from app.rag.document_classifier import classify_document
+from app.rag.document_classifier import (
+    authorization_domains,
+    classify_document,
+)
 from app.rag.document_guardrails import (
     check_classification,
     check_extracted_text,
@@ -135,6 +141,7 @@ class IngestionContext:
     extraction: Any = None
     image_check: Any = None
     classification: Any = None
+    authorization_domains: List[str] = field(default_factory=list)
     text_guardrail: Any = None
     content_guardrail: Any = None
     classification_guardrail: Any = None
@@ -319,6 +326,59 @@ class DocumentIngestionPipeline:
             getattr(ctx.classification, "domain", "") or ""
         ).strip()
 
+        detected_domains = sorted(
+            {
+                str(value or "").strip()
+                for value in (
+                    getattr(ctx, "authorization_domains", None) or []
+                )
+                if str(value or "").strip()
+            },
+            key=str.casefold,
+        )
+
+        # The primary classifier remains part of the authorization decision
+        # even when no page markers were present or a caller constructed the
+        # context without the newer page-evidence helper.
+        if domain not in {"NeedsReview", "Unknown", "", "Irrelevant"}:
+            if domain.casefold() not in {
+                value.casefold() for value in detected_domains
+            }:
+                detected_domains.append(domain)
+
+        if detected_domains:
+            denied_domains = [
+                value
+                for value in detected_domains
+                if not can_upload_document(
+                    str(ctx.user_role or ""),
+                    value,
+                )
+            ]
+
+            if not denied_domains:
+                return
+
+            if len(denied_domains) == 1:
+                reason = (
+                    "You do not have permission to upload documents "
+                    "in the {0} domain.".format(denied_domains[0])
+                )
+            else:
+                reason = (
+                    "You do not have permission to upload documents "
+                    "containing these domains: {0}.".format(
+                        ", ".join(denied_domains)
+                    )
+                )
+
+            raise _PipelineRejected(
+                reason,
+                extra={
+                    "classification": self._classification_payload(ctx),
+                },
+            )
+
         if can_upload_document(
             str(ctx.user_role or ""),
             domain,
@@ -326,6 +386,11 @@ class DocumentIngestionPipeline:
             return
 
         if domain in {"NeedsReview", "Unknown", ""}:
+            if can_review_unclassified_document(
+                str(ctx.user_role or "")
+            ):
+                return
+
             reason = (
                 "The document domain could not be established safely, "
                 "so it cannot be accepted for this user."
@@ -496,6 +561,18 @@ class DocumentIngestionPipeline:
         started = perf_counter()
         text = ctx.extraction.text
 
+        security_text = str(
+            getattr(ctx.extraction, "security_text", "") or ""
+        ).strip()
+
+        guardrail_text = text
+
+        if security_text:
+            guardrail_text = "{0}\n{1}".format(
+                text,
+                security_text,
+            )
+
         normalized_text = normalize_document_text(text)
         useful_chars = len(normalized_text.replace(" ", ""))
         if useful_chars >= self._min_duplicate_text_chars:
@@ -509,7 +586,7 @@ class DocumentIngestionPipeline:
         )
         content_guardrail_future = self._executor.submit(
             check_untrusted_document_text,
-            text,
+            guardrail_text,
         )
         classification_future = self._executor.submit(
             classify_document,
@@ -537,6 +614,10 @@ class DocumentIngestionPipeline:
                 self._analysis_timeout,
                 "Document classification",
             )
+            ctx.authorization_domains = sorted(
+                authorization_domains(text),
+                key=str.casefold,
+            )
 
             if (
                 not ctx.text_guardrail.allowed
@@ -546,6 +627,14 @@ class DocumentIngestionPipeline:
                     ctx.text_guardrail.reason
                     or "Extracted document text was rejected."
                 )
+
+            if not ctx.content_guardrail.safe:
+                raise _PipelineRejected(
+                    "The document contains unsafe embedded instructions "
+                    "and cannot be processed.",
+                    
+                )
+
 
             ctx.classification_guardrail = check_classification(
                 domain=ctx.classification.domain,
@@ -1026,12 +1115,18 @@ class DocumentIngestionPipeline:
     def _classification_payload(
         ctx: IngestionContext,
     ) -> Dict[str, Any]:
-        return {
+        payload = {
             "domain": ctx.classification.domain,
             "document_type": ctx.classification.document_type,
             "confidence": ctx.classification.confidence,
             "reason": ctx.classification.reason,
         }
+        detected_domains = list(
+            getattr(ctx, "authorization_domains", None) or []
+        )
+        if detected_domains:
+            payload["detected_domains"] = detected_domains
+        return payload
 
     @staticmethod
     def _elapsed_ms(

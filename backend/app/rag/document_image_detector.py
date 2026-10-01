@@ -1,3 +1,8 @@
+"""Deterministic document-likeness checks for uploaded images.
+
+Compatibility target: Python 3.9+.
+"""
+
 from __future__ import annotations
 
 import re
@@ -34,6 +39,8 @@ DOCUMENT_HINTS = {
     "repair",
     "service",
     "statement",
+    "grocery",
+    "shopping",
 }
 
 _PAGE_MARKER_RE = re.compile(
@@ -45,12 +52,12 @@ _PAGE_MARKER_RE = re.compile(
 def check_text_is_document(
     text: str,
 ) -> DocumentImageResult:
-    """
-    Decide whether already-extracted image text is document-like.
+    """Decide whether extracted image text can continue to classification.
 
-    This is the fast path used by the ingestion pipeline. It avoids running
-    OCR a second time merely to decide whether the image looks like a
-    document.
+    This gate only rejects blank or near-empty OCR. Short but readable text is
+    accepted with low confidence so handwritten lists and bills can reach the
+    stricter classification, authorization, interpretation, and review gates.
+    It does not authorize storage or any derived action.
     """
 
     raw_text = text or ""
@@ -109,11 +116,25 @@ def check_text_is_document(
             reason="Image contains substantial readable text.",
         )
 
+    if document_hint_count >= 1:
+        return DocumentImageResult(
+            is_document=True,
+            confidence=0.60,
+            text=raw_text,
+            reason=(
+                "Image contains limited readable text with a document-related "
+                "term; downstream review is required."
+            ),
+        )
+
     return DocumentImageResult(
-        is_document=False,
-        confidence=0.40,
+        is_document=True,
+        confidence=0.45,
         text=raw_text,
-        reason="Image does not contain enough document-like text.",
+        reason=(
+            "Image contains limited readable text; downstream classification "
+            "and review must determine whether it is supported."
+        ),
     )
 
 
@@ -121,14 +142,7 @@ def check_image_is_document(
     file_path: str,
     extracted_text: Optional[str] = None,
 ) -> DocumentImageResult:
-    """
-    Backwards-compatible image-document check.
-
-    Callers that already performed OCR should pass ``extracted_text`` so this
-    function performs only the inexpensive deterministic document-likeness
-    check. Older callers may continue to pass only ``file_path``; in that
-    case the public text-extraction API is used once.
-    """
+    """Run extraction once when the caller has not already supplied text."""
 
     if extracted_text is not None:
         return check_text_is_document(extracted_text)

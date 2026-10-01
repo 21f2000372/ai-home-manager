@@ -1,0 +1,45 @@
+{
+  "doc_id": "inv_02",
+  "file": "inv_02.pdf",
+  "category": "printed_invoice",
+  "difficulty": "easy",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "Hillview Appliance Hub",
+    "invoice_number": "INV-7508",
+    "date": "2026-08-22",
+    "items": [
+      {
+        "name": "AC servicing",
+        "qty": 2,
+        "rate": 1800,
+        "amount": 3600.0
+      },
+      {
+        "name": "Water purifier filter",
+        "qty": 1,
+        "rate": 2400,
+        "amount": 2400.0
+      },
+      {
+        "name": "Labour charges",
+        "qty": 2,
+        "rate": 500,
+        "amount": 1000.0
+      },
+      {
+        "name": "Geyser element replacement",
+        "qty": 1,
+        "rate": 1750,
+        "amount": 1750.0
+      }
+    ],
+    "subtotal": 8750.0,
+    "tax": 1575.0,
+    "total": 10325.0,
+    "payment_status": "unpaid",
+    "due_date": "2026-09-06"
+  },
+  "unreadable": [],
+  "should_clarify": false
+}
