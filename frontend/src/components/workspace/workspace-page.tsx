@@ -6,6 +6,6 @@ type WorkspacePageProps = { label: string; eyebrow: string };
 
 export function WorkspacePage({ label, eyebrow }: WorkspacePageProps) {
   const isOverview = label === 'Overview';
-  if (isOverview) return <section className="space-y-8"><WorkspaceHeader label={label} eyebrow={eyebrow} /><OverviewDashboard /></section>;
-  return <DomainWorkspace kind={label.toLowerCase().replace('ai assistant', 'chat') as 'people' | 'tasks' | 'calendar' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat'} />;
+  if (isOverview) return <section className="space-y-5"><WorkspaceHeader label={label} eyebrow={eyebrow} compact /><OverviewDashboard /></section>;
+  return <DomainWorkspace kind={label.toLowerCase().replace('ai assistant', 'chat') as 'people' | 'plan' | 'inventory' | 'grocery' | 'finance' | 'maintenance' | 'documents' | 'chat'} />;
 }
