@@ -140,6 +140,17 @@ class MaintenanceService:
             accountable_to=accountable_to_id,
         )
         session.add(issue)
+
+        from app.models.notifications import Notification
+        if accountable_to_id and accountable_to_id != reported_by_id:
+            session.add(
+                Notification(
+                    user_id=accountable_to_id,
+                    title="Maintenance Accountability Assigned",
+                    message=f"You are accountable for issue: '{issue.description[:60]}...'",
+                )
+            )
+            
         session.commit()
         return issue
 
