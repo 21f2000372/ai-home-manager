@@ -176,7 +176,11 @@ def create_task(
             return str(exc)
 
         assigned_to_id = _resolve_assignee(session, assigned_to)
-        task = TaskService.create_task(
+
+        # TaskService.create_task returns (task, conflicts). force=True so a
+        # scheduling conflict produces a warning rather than silently creating
+        # nothing (the agent still creates the task and reports the conflict).
+        task, conflicts = TaskService.create_task(
             session=session,
             title=title,
             description=description or None,
@@ -184,15 +188,23 @@ def create_task(
             assigned_to_id=assigned_to_id,
             due_at=parsed_due_at,
             priority=task_priority,
+            force=True,
         )
+
+        if task is None:
+            return "Could not create the task due to a scheduling conflict."
 
         result = f"Created task '{title}' (id={task.task_id})."
 
         if parsed_due_at:
             result += f" Due: {parsed_due_at.isoformat()}."
 
-        if assigned_to:
-            result += f" Assigned to: {assigned_to_id}."
+        if assigned_to_id:
+            names = _member_names(session, [assigned_to_id])
+            result += f" Assigned to: {names.get(assigned_to_id, assigned_to_id)}."
+
+        if conflicts and conflicts.get("has_conflict"):
+            result += " Note: this overlaps with an existing commitment."
 
         return result
 

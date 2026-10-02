@@ -42,6 +42,14 @@ from app.ai.agents.tools.tasks_tools import (
 
 )
 
+from app.ai.agents.request_context import (
+
+    set_agent_request_identity,
+
+    reset_agent_request_identity,
+
+)
+
 from app.auth.decorators import login_required
 
 from app.config import config
@@ -108,6 +116,16 @@ def _run_for_current_user(
 
     )
 
+    # Bind the verified identity the document/RAG tools read from context.
+
+    identity_tokens = set_agent_request_identity(
+
+        g.current_user.user_id,
+
+        g.current_role,
+
+    )
+
 
 
     try:
@@ -129,6 +147,8 @@ def _run_for_current_user(
         )
 
     finally:
+
+        reset_agent_request_identity(identity_tokens)
 
         reset_agent_user_id(user_token)
 
