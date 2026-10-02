@@ -1,0 +1,47 @@
+{
+  "doc_id": "hwg_29",
+  "file": "hwg_29.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "medium",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "paneer",
+        "qty": 200,
+        "unit": "g"
+      },
+      {
+        "name": "rice",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "cooking oil",
+        "qty": 2,
+        "unit": "l"
+      },
+      {
+        "name": "wheat flour",
+        "qty": 1,
+        "unit": "kg"
+      },
+      {
+        "name": "onions",
+        "qty": 3,
+        "unit": "kg"
+      },
+      {
+        "name": "toor dal",
+        "qty": 0.5,
+        "unit": "kg"
+      }
+    ]
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "crossed_out_items": [],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

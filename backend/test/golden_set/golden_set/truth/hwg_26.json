@@ -1,0 +1,54 @@
+{
+  "doc_id": "hwg_26",
+  "file": "hwg_26.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "medium",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "bananas",
+        "qty": 12,
+        "unit": "pcs"
+      },
+      {
+        "name": "paneer",
+        "qty": 500,
+        "unit": "g"
+      },
+      {
+        "name": "curd",
+        "qty": 500,
+        "unit": "g"
+      },
+      {
+        "name": "sugar",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "tomatoes",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "potatoes",
+        "qty": 5,
+        "unit": "kg"
+      },
+      {
+        "name": "tea powder",
+        "qty": 500,
+        "unit": "g"
+      }
+    ]
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "crossed_out_items": [
+    "bread"
+  ],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

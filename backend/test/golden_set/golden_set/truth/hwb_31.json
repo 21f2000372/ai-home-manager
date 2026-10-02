@@ -1,0 +1,35 @@
+{
+  "doc_id": "hwb_31",
+  "file": "hwb_31.jpg",
+  "category": "handwritten_bill",
+  "difficulty": "medium",
+  "doc_type": "bill",
+  "facts": {
+    "vendor": "Metro Fresh Mart",
+    "date": "2026-02-07",
+    "items": [
+      {
+        "name": "AC servicing",
+        "amount": 1800.0
+      },
+      {
+        "name": "Labour charges",
+        "amount": 500.0
+      },
+      {
+        "name": "Gas refill",
+        "amount": 950.0
+      },
+      {
+        "name": "Mixer grinder repair",
+        "amount": 650.0
+      }
+    ],
+    "total": 3900.0
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {
+    "note": "A bill is not a recorded payment. Use corrected amounts, not struck-through ones."
+  }
+}

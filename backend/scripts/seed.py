@@ -172,9 +172,29 @@ def seed() -> None:
         # --- Documents + Conversation ---
         receipt = Document(
             document_type=DocumentType.RECEIPT,
+            classified_document_type="GroceryReceipt",
+            domain="Finance",
+            classification_confidence=0.96,
+            classification_reason=(
+                "Seed grocery receipt for development."
+            ),
             storage_key="receipts/seed-grocery-receipt.jpg",
             original_filename="grocery-receipt.jpg",
             mime_type="image/jpeg",
+            extension=".jpg",
+            file_size=12345,
+            sha256=None,
+            normalized_text_hash=None,
+            visual_hashes_json=None,
+            extracted_text=(
+                "Seed grocery receipt. "
+                "Bread 45. Tomatoes 80. "
+                "Grand Total 125."
+            ),
+            extraction_method="seed",
+            page_count=1,
+            prompt_injection_detected=False,
+            status="approved",
             uploaded_by=adult.user_id,
         )
         session.add(receipt)

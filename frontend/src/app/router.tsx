@@ -11,8 +11,9 @@ import { useSessionStore } from '@/stores/session-store';
 const workspaceRoutes = [
   { path: 'overview', label: 'Overview', eyebrow: 'Household pulse' },
   { path: 'people', label: 'People', eyebrow: 'People & permissions' },
-  { path: 'tasks', label: 'Tasks', eyebrow: 'Tasks & schedule' },
-  { path: 'calendar', label: 'Calendar', eyebrow: 'Tasks & schedule' },
+  { path: 'plan', label: 'Plan', eyebrow: 'Tasks & schedule' },
+  { path: 'tasks', label: 'Plan', eyebrow: 'Tasks & schedule' },
+  { path: 'calendar', label: 'Plan', eyebrow: 'Tasks & schedule' },
   { path: 'inventory', label: 'Inventory', eyebrow: 'Food & inventory' },
   { path: 'grocery', label: 'Grocery', eyebrow: 'Food & inventory' },
   { path: 'finance', label: 'Finance', eyebrow: 'Finance & budget' },

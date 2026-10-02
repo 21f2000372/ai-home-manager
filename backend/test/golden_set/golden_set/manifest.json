@@ -1,0 +1,289 @@
+[
+  {
+    "doc_id": "inv_01",
+    "file": "inv_01.pdf",
+    "category": "printed_invoice",
+    "difficulty": "easy",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_02",
+    "file": "inv_02.pdf",
+    "category": "printed_invoice",
+    "difficulty": "easy",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_03",
+    "file": "inv_03.pdf",
+    "category": "printed_invoice",
+    "difficulty": "easy",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_04",
+    "file": "inv_04.pdf",
+    "category": "printed_invoice",
+    "difficulty": "easy",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_05",
+    "file": "inv_05.jpg",
+    "category": "printed_invoice",
+    "difficulty": "medium",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_06",
+    "file": "inv_06.jpg",
+    "category": "printed_invoice",
+    "difficulty": "medium",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_07",
+    "file": "inv_07.jpg",
+    "category": "printed_invoice",
+    "difficulty": "hard",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inv_08",
+    "file": "inv_08.pdf",
+    "category": "printed_invoice",
+    "difficulty": "medium",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "bill_09",
+    "file": "bill_09.pdf",
+    "category": "printed_bill",
+    "difficulty": "easy",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "bill_10",
+    "file": "bill_10.pdf",
+    "category": "printed_bill",
+    "difficulty": "easy",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "bill_11",
+    "file": "bill_11.jpg",
+    "category": "printed_bill",
+    "difficulty": "medium",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "war_12",
+    "file": "war_12.pdf",
+    "category": "warranty_card",
+    "difficulty": "easy",
+    "doc_type": "warranty"
+  },
+  {
+    "doc_id": "war_13",
+    "file": "war_13.pdf",
+    "category": "warranty_card",
+    "difficulty": "medium",
+    "doc_type": "warranty"
+  },
+  {
+    "doc_id": "war_14",
+    "file": "war_14.jpg",
+    "category": "warranty_card",
+    "difficulty": "medium",
+    "doc_type": "warranty"
+  },
+  {
+    "doc_id": "war_15",
+    "file": "war_15.jpg",
+    "category": "warranty_card",
+    "difficulty": "medium",
+    "doc_type": "warranty"
+  },
+  {
+    "doc_id": "man_16",
+    "file": "man_16.pdf",
+    "category": "manual",
+    "difficulty": "easy",
+    "doc_type": "manual"
+  },
+  {
+    "doc_id": "man_17",
+    "file": "man_17.pdf",
+    "category": "manual",
+    "difficulty": "easy",
+    "doc_type": "manual"
+  },
+  {
+    "doc_id": "man_18",
+    "file": "man_18.pdf",
+    "category": "manual",
+    "difficulty": "easy",
+    "doc_type": "manual"
+  },
+  {
+    "doc_id": "mix_19",
+    "file": "mix_19.pdf",
+    "category": "mixed_bundle",
+    "difficulty": "medium",
+    "doc_type": "mixed"
+  },
+  {
+    "doc_id": "mix_20",
+    "file": "mix_20.pdf",
+    "category": "mixed_bundle",
+    "difficulty": "medium",
+    "doc_type": "mixed"
+  },
+  {
+    "doc_id": "mix_21",
+    "file": "mix_21.pdf",
+    "category": "mixed_bundle",
+    "difficulty": "hard",
+    "doc_type": "mixed"
+  },
+  {
+    "doc_id": "hwg_22",
+    "file": "hwg_22.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "easy",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_23",
+    "file": "hwg_23.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "medium",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_24",
+    "file": "hwg_24.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "medium",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_25",
+    "file": "hwg_25.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "medium",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_26",
+    "file": "hwg_26.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "medium",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_27",
+    "file": "hwg_27.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "easy",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_28",
+    "file": "hwg_28.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "hard",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwg_29",
+    "file": "hwg_29.jpg",
+    "category": "handwritten_grocery",
+    "difficulty": "medium",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "hwb_30",
+    "file": "hwb_30.jpg",
+    "category": "handwritten_bill",
+    "difficulty": "easy",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "hwb_31",
+    "file": "hwb_31.jpg",
+    "category": "handwritten_bill",
+    "difficulty": "medium",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "hwb_32",
+    "file": "hwb_32.jpg",
+    "category": "handwritten_bill",
+    "difficulty": "medium",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "hwb_33",
+    "file": "hwb_33.jpg",
+    "category": "handwritten_bill",
+    "difficulty": "hard",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "hwb_34",
+    "file": "hwb_34.jpg",
+    "category": "handwritten_bill",
+    "difficulty": "medium",
+    "doc_type": "bill"
+  },
+  {
+    "doc_id": "inj_35",
+    "file": "inj_35.pdf",
+    "category": "injection",
+    "difficulty": "hard",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "inj_36",
+    "file": "inj_36.pdf",
+    "category": "injection",
+    "difficulty": "hard",
+    "doc_type": "manual"
+  },
+  {
+    "doc_id": "inj_37",
+    "file": "inj_37.pdf",
+    "category": "injection",
+    "difficulty": "hard",
+    "doc_type": "warranty"
+  },
+  {
+    "doc_id": "inj_38",
+    "file": "inj_38.jpg",
+    "category": "injection",
+    "difficulty": "hard",
+    "doc_type": "grocery_list"
+  },
+  {
+    "doc_id": "neg_39",
+    "file": "neg_39.jpg",
+    "category": "unreadable",
+    "difficulty": "easy",
+    "doc_type": "unreadable"
+  },
+  {
+    "doc_id": "neg_40",
+    "file": "neg_40.jpg",
+    "category": "unreadable",
+    "difficulty": "hard",
+    "doc_type": "invoice"
+  },
+  {
+    "doc_id": "neg_41",
+    "file": "neg_41.jpg",
+    "category": "unreadable",
+    "difficulty": "hard",
+    "doc_type": "invoice"
+  }
+]

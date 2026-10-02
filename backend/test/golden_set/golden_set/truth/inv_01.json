@@ -1,0 +1,39 @@
+{
+  "doc_id": "inv_01",
+  "file": "inv_01.pdf",
+  "category": "printed_invoice",
+  "difficulty": "easy",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "Anand Kirana Store",
+    "invoice_number": "INV-8226",
+    "date": "2026-09-14",
+    "items": [
+      {
+        "name": "Geyser element replacement",
+        "qty": 3,
+        "rate": 1750,
+        "amount": 5250.0
+      },
+      {
+        "name": "Water purifier filter",
+        "qty": 1,
+        "rate": 2400,
+        "amount": 2400.0
+      },
+      {
+        "name": "Refrigerator gas top-up",
+        "qty": 1,
+        "rate": 2200,
+        "amount": 2200.0
+      }
+    ],
+    "subtotal": 9850.0,
+    "tax": 1773.0,
+    "total": 11623.0,
+    "payment_status": "paid",
+    "due_date": null
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

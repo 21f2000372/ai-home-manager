@@ -1,0 +1,100 @@
+{
+  "doc_id": "mix_20",
+  "file": "mix_20.pdf",
+  "category": "mixed_bundle",
+  "difficulty": "medium",
+  "doc_type": "mixed",
+  "facts": {
+    "invoice": {
+      "vendor": "Metro Fresh Mart",
+      "invoice_number": "INV-7278",
+      "date": "2026-07-28",
+      "items": [
+        {
+          "name": "Mixer grinder repair",
+          "qty": 2,
+          "rate": 650,
+          "amount": 1300.0
+        },
+        {
+          "name": "Gas refill",
+          "qty": 2,
+          "rate": 950,
+          "amount": 1900.0
+        },
+        {
+          "name": "Geyser element replacement",
+          "qty": 2,
+          "rate": 1750,
+          "amount": 3500.0
+        },
+        {
+          "name": "Refrigerator gas top-up",
+          "qty": 3,
+          "rate": 2200,
+          "amount": 6600.0
+        }
+      ],
+      "subtotal": 13300.0,
+      "tax": 2394.0,
+      "total": 15694.0,
+      "payment_status": "paid",
+      "due_date": null
+    },
+    "warranty": {
+      "brand": "Novatec",
+      "product": "Air Cooler",
+      "model": "T609",
+      "serial": "SN65799328",
+      "purchase_date": "2026-03-12",
+      "warranty_months": 12,
+      "installation_date": "2026-03-14",
+      "expiry_date": "2027-03-12"
+    },
+    "manual": {
+      "brand": "Zenova",
+      "product": "Air Cooler",
+      "model": "T222",
+      "rated_power_w": 180,
+      "rated_voltage_v": 230,
+      "capacity_l": 40
+    }
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "sections": [
+    {
+      "type": "invoice",
+      "pages": [
+        1
+      ]
+    },
+    {
+      "type": "warranty",
+      "pages": [
+        2
+      ]
+    },
+    {
+      "type": "manual",
+      "pages": [
+        3,
+        4
+      ]
+    }
+  ],
+  "qa": [
+    {
+      "q": "What should I do if: unit stops after a few minutes?",
+      "a": "Switch off and let it cool for 30 minutes"
+    },
+    {
+      "q": "What should I do if: water leaks from the base?",
+      "a": "Stop using the unit and replace the seal"
+    },
+    {
+      "q": "What is the rated power?",
+      "a": "180 W"
+    }
+  ]
+}

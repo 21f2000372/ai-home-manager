@@ -1,4 +1,4 @@
-import { Bell, CalendarDays, ClipboardCheck, FileText, Home, MessageCircle, Package, Users, WalletCards, Wrench, type LucideIcon } from 'lucide-react';
+import { Bell, CalendarRange, FileText, Home, MessageCircle, Package, Users, WalletCards, Wrench, type LucideIcon } from 'lucide-react';
 
 export type Role = 'Admin' | 'Adult' | 'Child' | 'Guest';
 
@@ -13,8 +13,7 @@ export const navigationItems: NavigationItem[] = [
 
   { to: 'overview', label: 'Overview', icon: Home, roles: NON_GUEST },
   { to: 'people', label: 'People', icon: Users, roles: ['Admin', 'Adult'] },
-  { to: 'tasks', label: 'Tasks', icon: ClipboardCheck, roles: NON_GUEST },
-  { to: 'calendar', label: 'Calendar', icon: CalendarDays, roles: NON_GUEST },
+  { to: 'plan', label: 'Plan', icon: CalendarRange, roles: NON_GUEST },
   { to: 'inventory', label: 'Inventory', icon: Package, roles: NON_GUEST },
   { to: 'finance', label: 'Finance', icon: WalletCards, roles: ['Admin', 'Adult'] },
   { to: 'maintenance', label: 'Maintenance', icon: Wrench, roles: NON_GUEST },

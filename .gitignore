@@ -244,3 +244,58 @@ ai_home_manager.db
 # ChromaDB persistent vector store
 chroma_store/
 database/
+# --- AI Home Manager project-specific ---
+
+# SQLite database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+ai_home_manager.db
+
+# ChromaDB persistent vector store
+chroma_store/
+database/
+
+# Temporary document staging
+.pending_uploads/
+
+# ---------------------------------------------------------
+# Local tests / test helpers
+# ---------------------------------------------------------
+
+# Python test files
+test.py
+test_*.py
+*_test.py
+*_test_*.py
+make_test_*.py
+
+# Test directories / fixtures
+
+
+# ---------------------------------------------------------
+# Generated document test artifacts
+# ---------------------------------------------------------
+document_*.json
+# Base64 payload dumps
+*.base64.txt
+*_base64.txt
+test_memory_scope_result.txt
+# Generated test PDFs
+*_test.pdf
+*_test_*.pdf
+
+ingestion_hardening_fresh_*.pdf
+ingestion_same_text_different_bytes_*.pdf
+grocery_e2e_test_*.pdf
+grocery_json_test_*.pdf
+step8b_unique_test.pdf
+
+# Other local test artifacts
+fake.jpg
+child_food_test_01.pdf
+
+# Python cache
+__pycache__/
+*.pyc
