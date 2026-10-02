@@ -12,6 +12,21 @@ export type TaskQueryOptions = {
   status?: TaskStatus | 'All';
 };
 
+type TaskConflict = {
+  title: string;
+};
+
+export type TaskConflicts = {
+  has_conflict: boolean;
+  calendar_conflicts: TaskConflict[];
+  task_conflicts: TaskConflict[];
+};
+
+export type TaskMutationResult = {
+  task: HouseholdTask;
+  conflicts: TaskConflicts;
+};
+
 export function getTasks(options: TaskQueryOptions = {}) {
   const params = new URLSearchParams();
 
@@ -27,7 +42,7 @@ export function getHouseholdMembers() {
 }
 
 export function createTask(input: CreateTaskInput) {
-  return request<{ task_id: string; title: string; status: TaskStatus }>('/api/tasks', {
+  return request<TaskMutationResult>('/api/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -39,7 +54,7 @@ export function createTask(input: CreateTaskInput) {
 }
 
 export function updateTask(taskId: string, input: CreateTaskInput) {
-  return request<HouseholdTask>(`/api/tasks/${taskId}`, {
+  return request<TaskMutationResult>(`/api/tasks/${taskId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

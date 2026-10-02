@@ -28,7 +28,7 @@ export function CalendarWorkspace() {
   const createMutation = useMutation({
     mutationFn: createCalendarEvent,
     onSuccess: async (result) => {
-      setConflicts(result.conflicts.map((event) => event.title));
+      setConflicts([...result.conflicts.calendar_conflicts, ...result.conflicts.task_conflicts].map((conflict) => conflict.title));
       await queryClient.invalidateQueries({ queryKey: calendarQueryKey });
       setForm(emptyForm);
       setIsComposerOpen(false);

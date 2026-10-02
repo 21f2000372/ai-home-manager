@@ -12,8 +12,17 @@ export type CreateCalendarEventInput = {
   ends_at: string;
 };
 
+export type CalendarConflict = {
+  title: string;
+};
+
+export type CalendarConflicts = {
+  has_conflict: boolean;
+  calendar_conflicts: CalendarConflict[];
+  task_conflicts: CalendarConflict[];
+};
+
 export type CalendarCreateResult = {
   event: CalendarEvent;
-  conflicts: CalendarEvent[];
-  has_conflict: boolean;
+  conflicts: CalendarConflicts;
 };
