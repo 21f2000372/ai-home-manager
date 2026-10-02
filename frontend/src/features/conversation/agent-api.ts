@@ -8,7 +8,7 @@ export type PlannedAction = {
   domain: string;
   intent: string;
   description: string;
-  status: 'pending' | 'running' | 'completed' | 'unauthorized' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'unauthorized' | 'failed'| 'needs_clarification';
   result: string | null;
   tool_name?: string;
   tool_args?: Record<string, unknown>;
@@ -19,7 +19,11 @@ export type AgentMessageResponse = {
   response: string;
   planned_actions: PlannedAction[];
   interaction_id: string | null;
+
   conversation_id: string | null;
+  session_id: string | null;
+
+  awaiting_confirmation?: boolean;
   error: string | null;
 };
 

@@ -176,7 +176,7 @@ def create_task(
             return str(exc)
 
         assigned_to_id = _resolve_assignee(session, assigned_to)
-        task = TaskService.create_task(
+        task, conflicts = TaskService.create_task(
             session=session,
             title=title,
             description=description or None,
@@ -186,13 +186,64 @@ def create_task(
             priority=task_priority,
         )
 
-        result = f"Created task '{title}' (id={task.task_id})."
+        if task is None:
+            conflict_parts = []
+
+            for conflict in conflicts.get(
+                "task_conflicts",
+                [],
+            ):
+                conflict_parts.append(
+                    "task '{}'".format(
+                        conflict.get(
+                            "title",
+                            "existing task",
+                        )
+                    )
+                )
+
+            for conflict in conflicts.get(
+                "calendar_conflicts",
+                [],
+            ):
+                conflict_parts.append(
+                    "calendar event '{}'".format(
+                        conflict.get(
+                            "title",
+                            "existing event",
+                        )
+                    )
+                )
+
+            details = (
+                ", ".join(conflict_parts)
+                if conflict_parts
+                else "an existing schedule item"
+            )
+
+            return (
+                "Failed to create task because it "
+                "conflicts with {}.".format(
+                    details
+                )
+            )
+
+        result = (
+            "Created task '{}' (id={}).".format(
+                title,
+                task.task_id,
+            )
+        )
 
         if parsed_due_at:
-            result += f" Due: {parsed_due_at.isoformat()}."
+            result += " Due: {}.".format(
+                parsed_due_at.isoformat()
+            )
 
         if assigned_to:
-            result += f" Assigned to: {assigned_to_id}."
+            result += " Assigned to: {}.".format(
+                assigned_to_id
+            )
 
         return result
 

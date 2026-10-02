@@ -73,6 +73,7 @@ export function HouseholdChat({
     { id: "assistant-welcome", role: "assistant", text: initialMessage },
   ]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<AttachedReceipt | null>(null);
@@ -82,9 +83,10 @@ export function HouseholdChat({
 
   const chatMutation = useMutation({
     mutationFn: (message: string) =>
-      sendAgentMessage({ message, conversationId }),
+      sendAgentMessage({ message, conversationId,sessionId, }),
     onSuccess: (result: AgentMessageResponse, message: string) => {
       if (result.conversation_id) setConversationId(result.conversation_id);
+      if (result.session_id)setConversationId(result.conversation_id);
       void onMessageProcessed?.(result);
       setMessages((current) => [
         ...current,

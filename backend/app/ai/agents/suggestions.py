@@ -5,15 +5,28 @@ created from completed tool calls in the current request, filtered through
 RBAC before they are shown, persisted durably, and executed only after user
 approval and a fresh authorization check.
 
+Refactor notes
+--------------
+* Keyword detection uses whole-word matching (with simple plurals).  The old
+  substring matching let "ac" match "back" and "oil" match "toilet".
+* Rules are small per-tool functions registered in ``_RULES`` instead of one
+  long if-chain, so each rule can be tested and extended in isolation.
+* Calendar events that look like hosting (dinner, party, guests ...) offer a
+  grocery follow-up, now carrying the guest count and end time into the
+  replan context.  Eating-out events ("dinner at a restaurant") do not.
+
+Public API is unchanged: ``build_cross_domain_suggestion``,
+``cross_domain_suggestion_node``, ``suggestion_authorize_node``,
+``suggestion_approve_node``, ``route_after_suggestion_authorize``,
+and ``route_after_suggestion_approve``.
+
 Compatibility target: Python 3.8+.
 """
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
-from uuid import uuid4
-
-from langchain_core.messages import AIMessage
+from typing import Any, Callable, Dict, Iterable, List, Optional, Pattern, Tuple
 
 from app.ai.agents.authorize import authorize_node
 from app.ai.agents.permissions import is_authorized
@@ -26,6 +39,16 @@ from app.services.suggestion_workflow import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_CURRENCY = "INR"
+MAX_PLAUSIBLE_GUESTS = 500
+
 _FOOD_WORDS = {
     "food", "grocery", "groceries", "fruit", "vegetable", "vegetables",
     "apple", "apples", "banana", "bananas", "milk", "rice", "bread",
@@ -36,15 +59,30 @@ _REPAIR_WORDS = {
     "electrician", "appliance", "fan", "ac", "washing machine",
 }
 _EVENT_GROCERY_WORDS = {
-    "dinner", "lunch", "breakfast", "party", "birthday", "guests",
-    "guest", "get-together", "get together", "meal",
+    "dinner", "lunch", "breakfast", "brunch", "party", "parties",
+    "birthday", "anniversary", "celebration", "housewarming", "gathering",
+    "potluck", "barbecue", "bbq", "cookout", "guests", "guest",
+    "get-together", "get together", "meal",
 }
+# Events that are about eating somewhere else do not need a grocery run.
+_EATING_OUT_WORDS = {
+    "restaurant", "eat out", "eating out", "dine out", "dining out",
+    "takeout", "take-out", "takeaway", "take away", "order in",
+    "swiggy", "zomato", "cafe", "café",
+}
+
+_GENERIC_ITEM_WORDS = {"groceries", "grocery", "stuff", "things", "supplies"}
+
+_QUANTITY_UNITS = (
+    r"kg|kgs|g|gm|gms|grams?|litres?|liters?|l|ml|packs?|boxes?|cartons?|"
+    r"pieces?|pcs?|count"
+)
 _QUANTITY_RE = re.compile(
-    r"\b(\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gms|grams?|litres?|liters?|l|ml|packs?|boxes?|cartons?|pieces?|pcs?|count)?\b",
+    r"\b(\d+(?:\.\d+)?)\s*(" + _QUANTITY_UNITS + r")?\b",
     re.IGNORECASE,
 )
 _LEADING_QUANTITY_RE = re.compile(
-    r"^\s*(\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gms|grams?|litres?|liters?|l|ml|packs?|boxes?|cartons?|pieces?|pcs?|count)\b",
+    r"^\s*(\d+(?:\.\d+)?)\s*(" + _QUANTITY_UNITS + r")\b",
     re.IGNORECASE,
 )
 _MONEY_RE = re.compile(
@@ -52,6 +90,34 @@ _MONEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Guest-count patterns, most specific first.  The "for/of N" patterns refuse
+# to match times, dates and durations such as "for 8 pm" or "lunch for 3 days".
+_NOT_TIME_OR_DATE = (
+    r"(?!\s*(?:am|pm|a\.m|p\.m|:|%|hours?|hrs?|mins?|minutes?|days?|nights?|"
+    r"weeks?|(?:st|nd|rd|th)\b|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)))"
+)
+_GUEST_COUNT_PATTERNS = (
+    re.compile(
+        r"\b(\d{1,3})\s*(?:guests?|people|persons?|pax|friends|folks|adults|"
+        r"kids|children|members|relatives)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:party|group|table|dinner|lunch|gathering)\s+(?:of|for)\s+"
+        r"(\d{1,3})\b" + _NOT_TIME_OR_DATE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:for|with)\s+(\d{1,3})\b" + _NOT_TIME_OR_DATE,
+        re.IGNORECASE,
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Text helpers
+# ---------------------------------------------------------------------------
 
 def _normalize(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
@@ -61,22 +127,55 @@ def _lower(value: Any) -> str:
     return _normalize(value).casefold()
 
 
+def _compile_words(words: Iterable[str]) -> Pattern:
+    """Whole-word, plural-tolerant, case-insensitive pattern for ``words``."""
+
+    alternatives = []
+    cleaned = {
+        str(word).strip().casefold()
+        for word in words
+        if str(word).strip()
+    }
+    for word in sorted(cleaned, key=lambda item: (-len(item), item)):
+        alternatives.append(
+            r"\s+".join(re.escape(part) for part in word.split())
+        )
+    return re.compile(
+        r"(?<!\w)(?:%s)(?:s|es)?(?!\w)" % "|".join(alternatives),
+        re.IGNORECASE,
+    )
+
+
+_PATTERN_CACHE: Dict[frozenset, Pattern] = {}
+
+
+def _contains_any(text: str, words) -> bool:
+    """True when any of ``words`` appears as a whole word/phrase in ``text``."""
+
+    if not text:
+        return False
+    key = frozenset(words)
+    if not key:
+        return False
+    pattern = _PATTERN_CACHE.get(key)
+    if pattern is None:
+        pattern = _compile_words(key)
+        _PATTERN_CACHE[key] = pattern
+    return pattern.search(text) is not None
+
+
 def _action_text(action: Dict[str, Any]) -> str:
+    args = action.get("tool_args") or {}
     return " ".join(
         part
         for part in (
             _normalize(action.get("description")),
             _normalize(action.get("intent")),
-            _normalize((action.get("tool_args") or {}).get("description")),
-            _normalize((action.get("tool_args") or {}).get("category")),
+            _normalize(args.get("description")),
+            _normalize(args.get("category")),
         )
         if part
     )
-
-
-def _contains_any(text: str, words) -> bool:
-    lowered = text.casefold()
-    return any(word in lowered for word in words)
 
 
 def _subject_after_for_or_on(text: str) -> Optional[str]:
@@ -126,7 +225,9 @@ def _extract_food_subject(action: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _extract_quantity(action: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
+def _extract_quantity(
+    action: Dict[str, Any],
+) -> Tuple[Optional[float], Optional[str]]:
     text = _normalize(action.get("description"))
 
     # Prefer an explicit physical/count unit so a money amount such as
@@ -157,7 +258,23 @@ def _extract_money_from_action(
         return None, None
     if major < 0:
         return None, None
-    return int(round(major * 100)), "INR"
+    return int(round(major * 100)), DEFAULT_CURRENCY
+
+
+def _extract_guest_count(text: str) -> Optional[int]:
+    """Best-effort guest count from free text such as "party for 12"."""
+
+    if not text:
+        return None
+    for pattern in _GUEST_COUNT_PATTERNS:
+        for match in pattern.finditer(text):
+            try:
+                count = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if 1 <= count <= MAX_PLAUSIBLE_GUESTS:
+                return count
+    return None
 
 
 def _repair_subject(action: Dict[str, Any]) -> str:
@@ -185,6 +302,10 @@ def _repair_subject(action: Dict[str, Any]) -> str:
 
     return "the repair"
 
+
+# ---------------------------------------------------------------------------
+# Action helpers
+# ---------------------------------------------------------------------------
 
 def _known_tool_names(actions: List[Dict[str, Any]]) -> set:
     return {
@@ -235,7 +356,13 @@ def _make_suggestion(
     }
 
 
-def _batch_grocery_suggestion(actions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Batch rule (spans several actions)
+# ---------------------------------------------------------------------------
+
+def _batch_grocery_suggestion(
+    actions: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     grocery = [
         action for action in actions
         if action.get("tool_name") == "add_grocery_item"
@@ -275,275 +402,413 @@ def _batch_grocery_suggestion(actions: List[Dict[str, Any]]) -> Optional[Dict[st
     )
 
 
-def _rule_for_action(action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    tool = str(action.get("tool_name") or "")
-    args = dict(action.get("tool_args") or {})
+# ---------------------------------------------------------------------------
+# Per-tool rules
+#
+# Each rule receives (action, args, source_description) and returns a
+# suggestion dict or None.  Register new rules in _RULES at the bottom.
+# ---------------------------------------------------------------------------
+
+RuleFn = Callable[[Dict[str, Any], Dict[str, Any], str], Optional[Dict[str, Any]]]
+
+
+def _rule_log_expense(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    tool = "log_expense"
     text = _action_text(action)
-    source_description = _normalize(action.get("description"))
+    category = _lower(args.get("category"))
 
-    if tool == "log_expense":
-        category = _lower(args.get("category"))
-
-        if (
-            category in {"repair", "maintenance"}
-            or _contains_any(text, _REPAIR_WORDS)
-        ):
-            subject = _repair_subject(action)
-            return _make_suggestion(
-                target_domain="tasks",
-                target_tool="create_task",
-                permission_tool="create_task",
-                description="Create a follow-up task for {0}.".format(subject),
-                prompt=(
-                    "Would you like me to add a task to follow up on {0}?"
-                ).format(subject),
-                known_args={
-                    "title": "Follow up on {0}".format(subject),
-                },
-                continuation_mode="exact",
-                source_tool=tool,
-                source_description=source_description,
-            )
-
-        if (
-            category in {"food", "grocery", "groceries"}
-            or _contains_any(text, _FOOD_WORDS)
-        ):
-            item = _extract_food_subject(action)
-            if not item:
-                return None
-            quantity, unit = _extract_quantity(action)
-            known_args: Dict[str, Any] = {"name": item}
-            missing = []
-            if quantity is None:
-                missing.append("quantity")
-            else:
-                known_args["quantity"] = quantity
-            if unit:
-                known_args["unit"] = unit
-
-            return _make_suggestion(
-                target_domain="food",
-                target_tool="add_inventory_item",
-                permission_tool="add_inventory_item",
-                description="Add {0} to household inventory.".format(item),
-                prompt=(
-                    "Would you like me to add {0} to household inventory?"
-                ).format(item),
-                known_args=known_args,
-                missing_fields=missing,
-                detail_prompt=(
-                    "What quantity of {0} should I add to inventory?"
-                ).format(item) if missing else None,
-                continuation_mode="collect_exact" if missing else "exact",
-                source_tool=tool,
-                source_description=source_description,
-            )
-
-    if tool == "add_inventory_item":
-        item = _normalize(args.get("name")) or "this purchase"
-        quantity = args.get("quantity")
-        unit = _normalize(args.get("unit"))
-        item_text = item
-        if quantity is not None:
-            item_text = "{0}{1} {2}".format(
-                quantity,
-                (" " + unit) if unit else "",
-                item,
-            )
-
-        amount_minor, currency = _extract_money_from_action(action)
-        expense_args: Dict[str, Any] = {
-            "category": "Grocery",
-            "description": "Purchase of {0}".format(item_text),
-        }
-        missing = []
-        if amount_minor is None:
-            missing.extend(["amount_minor", "currency"])
-        else:
-            expense_args["amount_minor"] = amount_minor
-            expense_args["currency"] = currency or "INR"
-
-        return _make_suggestion(
-            target_domain="finance",
-            target_tool="log_expense",
-            permission_tool="log_expense",
-            description="Log the purchase expense for {0}.".format(item_text),
-            prompt=(
-                "Would you like me to log the expense for {0}?"
-            ).format(item_text),
-            known_args=expense_args,
-            missing_fields=missing,
-            detail_prompt=(
-                "How much did you pay for {0}? Please include the currency."
-            ).format(item_text) if missing else None,
-            continuation_mode="collect_exact" if missing else "exact",
-            source_tool=tool,
-            source_description=source_description,
-        )
-
-    if tool == "log_repair":
-        amount = args.get("cost_minor")
-        try:
-            has_cost = amount is not None and int(amount) > 0
-        except (TypeError, ValueError):
-            has_cost = False
-        if has_cost:
-            description = _normalize(args.get("notes")) or "Household repair"
-            expense_args: Dict[str, Any] = {
-                "amount_minor": int(amount),
-                "currency": _normalize(args.get("currency")) or "USD",
-                "category": "Repair",
-                "description": description,
-            }
-            if args.get("serviced_at"):
-                expense_args["occurred_at"] = args.get("serviced_at")
-            return _make_suggestion(
-                target_domain="finance",
-                target_tool="log_expense",
-                permission_tool="log_expense",
-                description="Log the repair cost as an expense.",
-                prompt="Would you like me to log this repair cost as an expense?",
-                known_args=expense_args,
-                continuation_mode="exact",
-                source_tool=tool,
-                source_description=source_description,
-            )
-
-    if tool == "report_issue":
-        issue = _normalize(args.get("description")) or "the maintenance issue"
+    if category in {"repair", "maintenance"} or _contains_any(text, _REPAIR_WORDS):
+        subject = _repair_subject(action)
         return _make_suggestion(
             target_domain="tasks",
             target_tool="create_task",
             permission_tool="create_task",
-            description="Create a follow-up task for the maintenance issue.",
-            prompt="Would you like me to add a follow-up task for this issue?",
-            known_args={"title": "Follow up: {0}".format(issue)},
+            description="Create a follow-up task for {0}.".format(subject),
+            prompt=(
+                "Would you like me to add a task to follow up on {0}?"
+            ).format(subject),
+            known_args={"title": "Follow up on {0}".format(subject)},
             continuation_mode="exact",
             source_tool=tool,
             source_description=source_description,
         )
 
-    if tool == "create_recurring_bill":
-        payee = _normalize(args.get("payee")) or "recurring bill"
-        due_at = _normalize(args.get("due_at"))
-        if due_at:
-            return _make_suggestion(
-                target_domain="tasks",
-                target_tool="create_task",
-                permission_tool="create_task",
-                description="Create a reminder for the recurring bill.",
-                prompt=(
-                    "Would you like a reminder for the {0} bill?"
-                ).format(payee),
-                known_args={
-                    "title": "Pay {0}".format(payee),
-                    "due_at": due_at,
-                },
-                continuation_mode="exact",
-                source_tool=tool,
-                source_description=source_description,
-            )
-
-    if tool == "create_task":
-        title = _normalize(args.get("title"))
-        title_lower = title.casefold()
-
-        if title_lower.startswith(("buy ", "order ")):
-            item = re.sub(
-                r"^(?:buy|order)\s+",
-                "",
-                title,
+    if category in {"food", "grocery", "groceries"} or _contains_any(text, _FOOD_WORDS):
+        item = _extract_food_subject(action)
+        if not item:
+            return None
+        # A purchased description can contain several grocery items.
+        # One add_inventory_item call cannot safely represent different
+        # quantities/units for each item, so replan the accepted follow-up.
+        is_multi_item = bool(
+            re.search(
+                r"(?:[,;]|\band\b|&)",
+                item,
                 flags=re.IGNORECASE,
-            ).strip()
-            if item:
-                return _make_suggestion(
-                    target_domain="food",
-                    target_tool="add_grocery_item",
-                    permission_tool="add_grocery_item",
-                    description="Add {0} to the grocery list.".format(item),
-                    prompt=(
-                        "Would you like me to add {0} to the grocery list?"
-                    ).format(item),
-                    known_args={"name": item},
-                    missing_fields=["quantity"],
-                    detail_prompt=(
-                        "What quantity of {0} should I add to the grocery list?"
-                    ).format(item),
-                    continuation_mode="collect_exact",
-                    source_tool=tool,
-                    source_description=source_description,
-                )
-
-        if title and _contains_any(title, _REPAIR_WORDS):
-            return _make_suggestion(
-                target_domain="maintenance",
-                target_tool="report_issue",
-                permission_tool="report_issue",
-                description="Record the task as a maintenance issue.",
-                prompt=(
-                    "Would you like me to record this as a maintenance issue too?"
-                ),
-                known_args={
-                    "description": title,
-                    "priority": _normalize(args.get("priority")) or "Normal",
-                },
-                continuation_mode="exact",
-                source_tool=tool,
-                source_description=source_description,
             )
+        )
 
-    if tool == "add_appliance":
-        name = _normalize(args.get("name")) or "the appliance"
-        warranty_end = _normalize(args.get("warranty_ends_at"))
-        if warranty_end:
-            return _make_suggestion(
-                target_domain="tasks",
-                target_tool="create_task",
-                permission_tool="create_task",
-                description="Create a warranty-expiry reminder for {0}.".format(name),
-                prompt=(
-                    "Would you like a reminder before the warranty for {0} expires?"
-                ).format(name),
-                known_args={
-                    "title": "Warranty expiry: {0}".format(name),
-                    "due_at": warranty_end,
-                },
-                continuation_mode="exact",
-                source_tool=tool,
-                source_description=source_description,
-            )
-
-    if tool == "create_calendar_event":
-        title = _normalize(args.get("title"))
-        if title and _contains_any(title, _EVENT_GROCERY_WORDS):
-            when = _normalize(args.get("starts_at"))
-            context = "Event: {0}".format(title)
-            if when:
-                context += "; starts at {0}".format(when)
+        if is_multi_item:
             return _make_suggestion(
                 target_domain="food",
                 target_tool=None,
-                permission_tool="add_grocery_item",
-                description="Add grocery items for {0}.".format(title),
+                permission_tool="add_inventory_item",
+                description=(
+                    "Add purchased grocery items to household inventory."
+                ),
                 prompt=(
-                    "Would you like me to add grocery items for {0}?"
-                ).format(title),
+                    "Would you like me to add {0} "
+                    "to household inventory?"
+                ).format(item),
                 known_args={},
                 missing_fields=["items"],
                 detail_prompt=(
-                    "Which items should I add to the grocery list for {0}?"
-                ).format(title),
+                    "Please give the quantity and unit for each item "
+                    "you want added to inventory."
+                ),
                 continuation_mode="replan",
                 source_tool=tool,
                 source_description=source_description,
-                context_text=context,
+                context_text=(
+                    "The user accepted adding these purchased grocery "
+                    "items to household inventory: {0}. "
+                    "Create separate inventory actions for each item, "
+                    "preserving each item's quantity and unit."
+                ).format(item),
             )
+        
+        quantity, unit = _extract_quantity(action)
+        known_args: Dict[str, Any] = {"name": item}
+        missing: List[str] = []
+        if quantity is None:
+            missing.append("quantity")
+        else:
+            known_args["quantity"] = quantity
+        if unit:
+            known_args["unit"] = unit
+
+        return _make_suggestion(
+            target_domain="food",
+            target_tool="add_inventory_item",
+            permission_tool="add_inventory_item",
+            description="Add {0} to household inventory.".format(item),
+            prompt=(
+                "Would you like me to add {0} to household inventory?"
+            ).format(item),
+            known_args=known_args,
+            missing_fields=missing,
+            detail_prompt=(
+                "What quantity of {0} should I add to inventory?"
+            ).format(item) if missing else None,
+            continuation_mode="collect_exact" if missing else "exact",
+            source_tool=tool,
+            source_description=source_description,
+        )
 
     return None
 
 
-def build_cross_domain_suggestion(state: AgentState) -> Optional[Dict[str, Any]]:
+def _rule_add_inventory_item(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    item = _normalize(args.get("name")) or "this purchase"
+    quantity = args.get("quantity")
+    unit = _normalize(args.get("unit"))
+    item_text = item
+    if quantity is not None:
+        item_text = "{0}{1} {2}".format(
+            quantity,
+            (" " + unit) if unit else "",
+            item,
+        )
+
+    amount_minor, currency = _extract_money_from_action(action)
+    expense_args: Dict[str, Any] = {
+        "category": "Grocery",
+        "description": "Purchase of {0}".format(item_text),
+    }
+    missing: List[str] = []
+    if amount_minor is None:
+        missing.extend(["amount_minor", "currency"])
+    else:
+        expense_args["amount_minor"] = amount_minor
+        expense_args["currency"] = currency or DEFAULT_CURRENCY
+
+    return _make_suggestion(
+        target_domain="finance",
+        target_tool="log_expense",
+        permission_tool="log_expense",
+        description="Log the purchase expense for {0}.".format(item_text),
+        prompt=(
+            "Would you like me to log the expense for {0}?"
+        ).format(item_text),
+        known_args=expense_args,
+        missing_fields=missing,
+        detail_prompt=(
+            "How much did you pay for {0}? Please include the currency."
+        ).format(item_text) if missing else None,
+        continuation_mode="collect_exact" if missing else "exact",
+        source_tool="add_inventory_item",
+        source_description=source_description,
+    )
+
+
+def _rule_log_repair(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    amount = args.get("cost_minor")
+    try:
+        has_cost = amount is not None and int(amount) > 0
+    except (TypeError, ValueError):
+        has_cost = False
+    if not has_cost:
+        return None
+
+    expense_args: Dict[str, Any] = {
+        "amount_minor": int(amount),
+        "currency": _normalize(args.get("currency")) or DEFAULT_CURRENCY,
+        "category": "Repair",
+        "description": _normalize(args.get("notes")) or "Household repair",
+    }
+    if args.get("serviced_at"):
+        expense_args["occurred_at"] = args.get("serviced_at")
+
+    return _make_suggestion(
+        target_domain="finance",
+        target_tool="log_expense",
+        permission_tool="log_expense",
+        description="Log the repair cost as an expense.",
+        prompt="Would you like me to log this repair cost as an expense?",
+        known_args=expense_args,
+        continuation_mode="exact",
+        source_tool="log_repair",
+        source_description=source_description,
+    )
+
+
+def _rule_report_issue(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    issue = _normalize(args.get("description")) or "the maintenance issue"
+    return _make_suggestion(
+        target_domain="tasks",
+        target_tool="create_task",
+        permission_tool="create_task",
+        description="Create a follow-up task for the maintenance issue.",
+        prompt="Would you like me to add a follow-up task for this issue?",
+        known_args={"title": "Follow up: {0}".format(issue)},
+        continuation_mode="exact",
+        source_tool="report_issue",
+        source_description=source_description,
+    )
+
+
+def _rule_create_recurring_bill(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    payee = _normalize(args.get("payee")) or "recurring bill"
+    due_at = _normalize(args.get("due_at"))
+    if not due_at:
+        return None
+    return _make_suggestion(
+        target_domain="tasks",
+        target_tool="create_task",
+        permission_tool="create_task",
+        description="Create a reminder for the recurring bill.",
+        prompt="Would you like a reminder for the {0} bill?".format(payee),
+        known_args={"title": "Pay {0}".format(payee), "due_at": due_at},
+        continuation_mode="exact",
+        source_tool="create_recurring_bill",
+        source_description=source_description,
+    )
+
+
+def _rule_create_task(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    tool = "create_task"
+    title = _normalize(args.get("title"))
+    if not title:
+        return None
+
+    if title.casefold().startswith(("buy ", "order ")):
+        item = re.sub(
+            r"^(?:buy|order)\s+",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        ).strip()
+        if item:
+            return _make_suggestion(
+                target_domain="food",
+                target_tool="add_grocery_item",
+                permission_tool="add_grocery_item",
+                description="Add {0} to the grocery list.".format(item),
+                prompt=(
+                    "Would you like me to add {0} to the grocery list?"
+                ).format(item),
+                known_args={"name": item},
+                missing_fields=["quantity"],
+                detail_prompt=(
+                    "What quantity of {0} should I add to the grocery list?"
+                ).format(item),
+                continuation_mode="collect_exact",
+                source_tool=tool,
+                source_description=source_description,
+            )
+
+    if _contains_any(title, _REPAIR_WORDS):
+        return _make_suggestion(
+            target_domain="maintenance",
+            target_tool="report_issue",
+            permission_tool="report_issue",
+            description="Record the task as a maintenance issue.",
+            prompt="Would you like me to record this as a maintenance issue too?",
+            known_args={
+                "description": title,
+                "priority": _normalize(args.get("priority")) or "Normal",
+            },
+            continuation_mode="exact",
+            source_tool=tool,
+            source_description=source_description,
+        )
+
+    return None
+
+
+def _rule_add_appliance(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    name = _normalize(args.get("name")) or "the appliance"
+    warranty_end = _normalize(args.get("warranty_ends_at"))
+    if not warranty_end:
+        return None
+    return _make_suggestion(
+        target_domain="tasks",
+        target_tool="create_task",
+        permission_tool="create_task",
+        description="Create a warranty-expiry reminder for {0}.".format(name),
+        prompt=(
+            "Would you like a reminder before the warranty for {0} expires?"
+        ).format(name),
+        known_args={
+            "title": "Warranty expiry: {0}".format(name),
+            "due_at": warranty_end,
+        },
+        continuation_mode="exact",
+        source_tool="add_appliance",
+        source_description=source_description,
+    )
+
+
+def _rule_create_calendar_event(
+    action: Dict[str, Any],
+    args: Dict[str, Any],
+    source_description: str,
+) -> Optional[Dict[str, Any]]:
+    """Hosting-style events (dinner, party, guests ...) -> grocery follow-up."""
+
+    title = _normalize(args.get("title"))
+    if not title:
+        return None
+
+    details = " ".join(
+        part
+        for part in (
+            title,
+            _normalize(args.get("description")),
+            source_description,
+        )
+        if part
+    )
+
+    if not _contains_any(details, _EVENT_GROCERY_WORDS):
+        return None
+
+    # "Dinner at a restaurant" needs no groceries.
+    if _contains_any(details, _EATING_OUT_WORDS):
+        return None
+
+    guests = _extract_guest_count(details)
+    label = (
+        "{0} ({1} guests)".format(title, guests) if guests else title
+    )
+
+    context = "Event: {0}".format(title)
+    starts_at = _normalize(args.get("starts_at"))
+    ends_at = _normalize(args.get("ends_at"))
+    if starts_at:
+        context += "; starts at {0}".format(starts_at)
+    if ends_at:
+        context += "; ends at {0}".format(ends_at)
+    if guests:
+        context += "; about {0} guests".format(guests)
+
+    return _make_suggestion(
+        target_domain="food",
+        target_tool=None,
+        permission_tool="add_grocery_item",
+        description="Add grocery items for {0}.".format(title),
+        prompt=(
+            "Would you like me to add grocery items for {0}?"
+        ).format(label),
+        known_args={},
+        missing_fields=["items"],
+        detail_prompt=(
+            "Which items should I add to the grocery list for {0}?"
+        ).format(label),
+        continuation_mode="replan",
+        source_tool="create_calendar_event",
+        source_description=source_description,
+        context_text=context,
+    )
+
+
+_RULES: Dict[str, RuleFn] = {
+    "log_expense": _rule_log_expense,
+    "add_inventory_item": _rule_add_inventory_item,
+    "log_repair": _rule_log_repair,
+    "report_issue": _rule_report_issue,
+    "create_recurring_bill": _rule_create_recurring_bill,
+    "create_task": _rule_create_task,
+    "add_appliance": _rule_add_appliance,
+    "create_calendar_event": _rule_create_calendar_event,
+}
+
+
+def _rule_for_action(action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    tool = str(action.get("tool_name") or "")
+    rule = _RULES.get(tool)
+    if rule is None:
+        return None
+    args = dict(action.get("tool_args") or {})
+    source_description = _normalize(action.get("description"))
+    return rule(action, args, source_description)
+
+
+# ---------------------------------------------------------------------------
+# Suggestion selection
+# ---------------------------------------------------------------------------
+
+def build_cross_domain_suggestion(
+    state: AgentState,
+) -> Optional[Dict[str, Any]]:
     """Return at most one useful, RBAC-allowed suggestion for this turn."""
 
     actions = _completed_actions(state)
@@ -592,18 +857,9 @@ def build_cross_domain_suggestion(state: AgentState) -> Optional[Dict[str, Any]]
     return None
 
 
-def _synthetic_ai_message(tool_name: str, args: Dict[str, Any]) -> AIMessage:
-    return AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "name": tool_name,
-                "args": dict(args),
-                "id": "suggestion_{0}".format(uuid4().hex),
-            }
-        ],
-    )
-
+# ---------------------------------------------------------------------------
+# Graph nodes
+# ---------------------------------------------------------------------------
 
 def cross_domain_suggestion_node(state: AgentState) -> Dict[str, Any]:
     suggestion = build_cross_domain_suggestion(state)
@@ -615,8 +871,10 @@ def cross_domain_suggestion_node(state: AgentState) -> Dict[str, Any]:
 
     try:
         proposal_id = persist_suggestion_offer(state, suggestion)
-    except SuggestionWorkflowError:
-        # Suggestions must never break an otherwise successful user request.
+    except SuggestionWorkflowError as exc:
+        # Suggestions must never break an otherwise successful user request,
+        # but log why one was dropped (e.g. another review is still open).
+        logger.info("cross-domain suggestion not offered: %s", exc)
         return {
             "active_suggestion": None,
             "awaiting_confirmation": False,
