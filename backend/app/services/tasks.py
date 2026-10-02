@@ -200,6 +200,37 @@ class TaskService:
         session.commit()
         return task
 
+    @staticmethod
+    def list_user_tasks(
+        session: Session,
+        user_id: str,
+        status: Optional[TaskStatus] = None,
+    ) -> List[Task]:
+        """Fetch tasks assigned specifically to a given user."""
+        priority_rank = case(
+            (Task.priority == Priority.HIGH, 1),
+            (Task.priority == Priority.NORMAL, 2),
+            (Task.priority == Priority.LOW, 3),
+            else_=4,
+        )
+        status_rank = case(
+            (Task.status == TaskStatus.IN_PROGRESS, 1),
+            (Task.status == TaskStatus.OPEN, 2),
+            (Task.status == TaskStatus.DONE, 3),
+            (Task.status == TaskStatus.CANCELLED, 4),
+            else_=5,
+        )
+        query = session.query(Task).filter(Task.assigned_to == user_id)
+        if status:
+            query = query.filter(Task.status == status)
+
+        return query.order_by(
+            Task.due_at.asc().nullslast(),
+            priority_rank.asc(),
+            status_rank.asc(),
+            Task.created_at.asc(),
+        ).all()
+
     @classmethod
     def update_task(
         cls,
@@ -384,6 +415,25 @@ class CalendarService:
             query = query.filter(CalendarEvent.ends_at >= range_start)
         if range_end:
             query = query.filter(CalendarEvent.starts_at <= range_end)
+        return query.order_by(CalendarEvent.starts_at.asc()).all()
+
+    @staticmethod
+    def list_user_events(
+        session: Session,
+        user_id: str,
+        range_start: Optional[datetime] = None,
+        range_end: Optional[datetime] = None,
+    ) -> List[CalendarEvent]:
+        """Fetch events owned by or attended by a specific user."""
+        query = session.query(CalendarEvent).filter(
+            (CalendarEvent.owner_id == user_id)
+            | (CalendarEvent.attendees.any(User.user_id == user_id))
+        )
+        if range_start:
+            query = query.filter(CalendarEvent.ends_at >= range_start)
+        if range_end:
+            query = query.filter(CalendarEvent.starts_at <= range_end)
+
         return query.order_by(CalendarEvent.starts_at.asc()).all()
 
     @classmethod
