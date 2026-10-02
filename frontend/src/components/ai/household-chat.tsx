@@ -14,6 +14,7 @@ import { Button } from "@/components/design-system/button";
 import { Card } from "@/components/design-system/card";
 import { ApiError } from "@/lib/api/request";
 import {
+  fileToAttachment,
   sendAgentMessage,
   type AgentMessageResponse,
 } from "@/features/conversation/agent-api";
@@ -65,6 +66,34 @@ type HouseholdChatProps = {
 const defaultMessage =
   "Tell me about a household task, or attach a text file and I will help turn it into an actionable plan.";
 
+const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
+
+/**
+ * Render message text, turning any URL into a clickable "Download" link.
+ * Used so document download links from the assistant are actionable.
+ */
+function renderMessageText(text: string) {
+  const parts = text.split(URL_PATTERN);
+  return parts.map((part, index) => {
+    if (URL_PATTERN.test(part)) {
+      // Reset lastIndex because the regex is global and reused in .test().
+      URL_PATTERN.lastIndex = 0;
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-semibold text-[#27736d] underline underline-offset-2 hover:text-[#1f574f]"
+        >
+          Download here
+        </a>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
+}
+
 export function HouseholdChat({
   title = "Household assistant",
   description = "Type, attach readable text, or dictate a request.",
@@ -90,21 +119,38 @@ export function HouseholdChat({
   const messageListRef = useRef<HTMLDivElement>(null);
 
   const chatMutation = useMutation({
-    mutationFn: (message: string) =>
-      sendAgentMessage({ message, conversationId }),
-    onSuccess: (result: AgentMessageResponse, message: string) => {
+    mutationFn: async (vars: { message: string; file: File | null }) => {
+      const attachment = vars.file ? await fileToAttachment(vars.file) : null;
+      return sendAgentMessage({ message: vars.message, conversationId, file: attachment });
+    },
+    onSuccess: (result: AgentMessageResponse, vars: { message: string; file: File | null }) => {
       if (result.conversation_id) setConversationId(result.conversation_id);
       void onMessageProcessed?.(result);
+      // Clear the attached receipt once it's been sent.
+      if (receipt?.previewUrl) URL.revokeObjectURL(receipt.previewUrl);
+      setReceipt(null);
+      const userText = vars.file ? `${vars.message}  📎 ${vars.file.name}` : vars.message;
+
+      let assistantText = result.error ?? result.response ?? "I could not produce a response.";
+
+      // The LLM sometimes drops/placeholders a document download URL in its
+      // prose. Pull the real URL from the raw tool results (planned_actions)
+      // and append it so the download link is always clickable.
+      const toolText = (result.planned_actions ?? [])
+        .map((action) => action.result ?? "")
+        .join("\n");
+      const urlMatch = toolText.match(/https?:\/\/[^\s)]+/);
+      if (urlMatch && !/https?:\/\//.test(assistantText)) {
+        assistantText += `\n\nDownload link: ${urlMatch[0]}`;
+      }
+
       setMessages((current) => [
         ...current,
-        { id: crypto.randomUUID(), role: "user", text: message },
+        { id: crypto.randomUUID(), role: "user", text: userText },
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          text:
-            result.error ??
-            result.response ??
-            "I could not produce a response.",
+          text: assistantText,
         },
       ]);
     },
@@ -118,11 +164,14 @@ export function HouseholdChat({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const message = draft.trim();
-    if (!message || chatMutation.isPending) return;
+    const typed = draft.trim();
+    // Allow sending if there's text OR an attached receipt.
+    if ((!typed && !receipt) || chatMutation.isPending) return;
+    // The backend requires a non-empty message, so default one when only a file is sent.
+    const message = typed || "Please review this document.";
     setDraft("");
     setInputError(null);
-    chatMutation.mutate(message);
+    chatMutation.mutate({ message, file: receipt?.file ?? null });
   }
 
   async function readFile(event: ChangeEvent<HTMLInputElement>) {
@@ -258,9 +307,9 @@ export function HouseholdChat({
         {visibleMessages.map((message) => (
           <div
             key={message.id}
-            className={`max-w-[92%] rounded-2xl p-3 text-sm leading-6 sm:max-w-2xl ${message.role === "user" ? "ml-auto bg-[#27736d] text-white" : "bg-[#ECEAE4] text-[var(--ink)]"}`}
+            className={`max-w-[92%] whitespace-pre-wrap rounded-2xl p-3 text-sm leading-6 sm:max-w-2xl ${message.role === "user" ? "ml-auto bg-[#27736d] text-white" : "bg-[#ECEAE4] text-[var(--ink)]"}`}
           >
-            {message.text}
+            {message.role === "assistant" ? renderMessageText(message.text) : message.text}
           </div>
         ))}
         {chatMutation.isPending && (
@@ -312,8 +361,7 @@ export function HouseholdChat({
                 {receipt.file.name}
               </p>
               <p className="text-xs muted">
-                {(receipt.file.size / 1024).toFixed(0)} KB · attached (not
-                uploaded yet)
+                {(receipt.file.size / 1024).toFixed(0)} KB · will be sent with your message
               </p>
             </div>
             <button
@@ -382,7 +430,7 @@ export function HouseholdChat({
           </div>
           <Button
             type="submit"
-            disabled={!draft.trim() || chatMutation.isPending}
+            disabled={(!draft.trim() && !receipt) || chatMutation.isPending}
             className="w-full sm:w-auto"
           >
             <Send size={16} />
