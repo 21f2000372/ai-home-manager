@@ -106,7 +106,12 @@ from app.services.suggestion_workflow import (
 
 )
 
-
+from app.services.clarification_workflow import (
+    CLARIFICATION_KIND,
+    ClarificationWorkflowError,
+    cancel_pending_clarification,
+    load_pending_clarification,
+)
 
 
 
@@ -290,7 +295,38 @@ EDIT_PREFIXES = (
 
 )
 
+_SAME_PURCHASE_RESPONSES = {
+    "same",
+    "same one",
+    "same purchase",
+    "same expense",
+    "same transaction",
+    "it is the same",
+    "it's the same",
+    "use existing",
+    "use the existing one",
+    "already logged",
+    "do not add another",
+    "don't add another",
+}
 
+
+_SEPARATE_PURCHASE_RESPONSES = {
+    "separate",
+    "separate purchase",
+    "separate expense",
+    "separate transaction",
+    "different purchase",
+    "different expense",
+    "another purchase",
+    "another expense",
+    "new purchase",
+    "new expense",
+    "it is separate",
+    "it's separate",
+    "log separately",
+    "add separately",
+}
 
 DEFAULT_CONFIRMATION_TTL_HOURS = 24
 
@@ -313,15 +349,11 @@ _EDITABLE_CONFIRMATION_KINDS = (
 )
 
 _ROUTABLE_CONFIRMATION_KINDS = (
-
     "document",
-
     DOCUMENT_ACTION_KIND,
-
     "suggestion",
-
+    CLARIFICATION_KIND,
     *_CHAT_CONFIRMATION_KINDS,
-
 )
 
 
@@ -716,8 +748,78 @@ def _edit_request_kind(message: str) -> Optional[str]:
 
     return None
 
+def _is_direct_suggestion_detail_reply(
+    message: str,
+    suggestion: Dict[str, Any],
+) -> bool:
+    """
+    Conservatively recognize a reply that supplies concrete details for
+    an already-offered suggestion.
 
+    This is not approval by itself. It only moves the existing durable
+    suggestion into its detail-collection/replan path.
+    """
 
+    missing_fields = {
+        str(field).strip()
+        for field in (
+            suggestion.get("missing_fields")
+            or []
+        )
+        if str(field).strip()
+    }
+
+    if not missing_fields:
+        return False
+
+    target_tool = str(
+        suggestion.get("target_tool")
+        or ""
+    ).strip()
+
+    value = str(message or "").casefold().strip()
+
+    if not value:
+        return False
+
+    if target_tool == "log_expense":
+        if not (
+            {"amount_minor", "currency"}
+            & missing_fields
+        ):
+            return False
+
+        has_amount = bool(
+            re.search(
+                r"\b\d+(?:\.\d{1,2})?\b",
+                value,
+            )
+        )
+
+        has_currency = bool(
+            re.search(
+                r"(?:₹|\$|€|£|\brs\.?\b|\binr\b|"
+                r"\busd\b|\beur\b|\bgbp\b)",
+                value,
+                flags=re.IGNORECASE,
+            )
+        )
+
+        if (
+            "amount_minor" in missing_fields
+            and not has_amount
+        ):
+            return False
+
+        if (
+            "currency" in missing_fields
+            and not has_currency
+        ):
+            return False
+
+        return True
+
+    return False
 
 
 
@@ -863,8 +965,434 @@ def _canonical_unit(value: Optional[str]) -> Optional[str]:
     return _UNIT_ALIASES.get(normalized, normalized)
 
 
+def _same_or_separate_choice(
+    message: str,
+) -> Optional[str]:
+    """
+    Parse an explicit duplicate-identity clarification.
+
+    This does not approve a mutation. It only establishes whether
+    the proposed record represents the same real-world transaction
+    or a separate transaction.
+    """
+
+    value = _normalize_reply(message)
+
+    if value in _SAME_PURCHASE_RESPONSES:
+        return "same"
+
+    if value in _SEPARATE_PURCHASE_RESPONSES:
+        return "separate"
+
+    return None
 
 
+def _primary_consistency_resolution_type(
+    payload: Dict[str, Any],
+) -> Optional[str]:
+    results = payload.get(
+        "consistency_results"
+    )
+
+    if not isinstance(results, list):
+        return None
+
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+
+        resolution_type = str(
+            result.get("resolution_type")
+            or ""
+        ).strip()
+
+        if resolution_type:
+            return resolution_type
+
+    return None
+
+
+def _is_expense_same_or_separate_review(
+    payload: Dict[str, Any],
+) -> bool:
+    match = payload.get(
+        "duplicate_match"
+    )
+
+    if not isinstance(match, dict):
+        return False
+
+    if (
+        str(
+            match.get("record_type")
+            or ""
+        ).strip()
+        != "expense"
+    ):
+        return False
+
+    duplicate_status = str(
+        payload.get("duplicate_status")
+        or ""
+    ).strip()
+
+    if duplicate_status not in {
+        "DUPLICATE",
+        "POSSIBLE_DUPLICATE",
+    }:
+        return False
+
+    resolution_type = (
+        _primary_consistency_resolution_type(
+            payload
+        )
+    )
+
+    # Compatibility for already-persisted proposals that predate
+    # consistency_results being stored.
+    return (
+        resolution_type
+        in {
+            None,
+            "",
+            "same_or_separate",
+        }
+    )
+
+
+def _expense_duplicate_resolution_prompt(
+    payload: Dict[str, Any],
+) -> str:
+    """
+    Ask an identity question, not an approval question.
+    """
+
+    details = str(
+        payload.get("duplicate_details")
+        or ""
+    ).strip()
+
+    question = (
+        "Is this the same purchase that was already recorded, "
+        "or is it a separate purchase?\n"
+        "Reply 'same purchase' or 'separate purchase'."
+    )
+
+    if details:
+        return "{0}\n{1}".format(
+            details,
+            question,
+        )
+
+    return question
+
+def _close_expense_duplicate_as_existing(
+    *,
+    session,
+    proposal: WorkflowProposal,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Resolve the proposed expense as the already-existing household
+    transaction. No mutation is executed.
+    """
+
+    actions = list(
+        payload.get("planned_actions")
+        or []
+    )
+
+    index = int(
+        payload.get(
+            "current_action_index",
+            0,
+        )
+        or 0
+    )
+
+    if 0 <= index < len(actions):
+        action = dict(
+            actions[index]
+        )
+
+        action["status"] = "cancelled"
+        action["result"] = (
+            "Matched an existing household expense; "
+            "no duplicate expense was created."
+        )
+
+        actions[index] = action
+
+    proposal.status = "REJECTED"
+    proposal.updated_at = utcnow()
+    proposal.last_error = None
+
+    session.commit()
+
+    return {
+        "confirmation_resolution": "cancelled",
+        "confirmation_kind": (
+            payload.get("confirmation_kind")
+            or proposal.kind
+        ),
+        "workflow_proposal_id": str(
+            proposal.proposal_id
+        ),
+        "editing_workflow_proposal_id": None,
+        "pending_edit_context": None,
+        "force_action_review": False,
+
+        "planned_actions": actions,
+        "current_action_index": index,
+
+        "pending_tool_call": None,
+        "pending_ai_message": None,
+
+        "duplicate_status": "RESOLVED",
+        "duplicate_details": (
+            "Matched the existing household expense."
+        ),
+        "duplicate_match": payload.get(
+            "duplicate_match"
+        ),
+
+        "awaiting_confirmation": False,
+        "finished": True,
+
+        "response": (
+            "Okay. I'll use the existing expense "
+            "and won't log another one."
+        ),
+    }
+def _stage_expense_as_separate_for_confirmation(
+    *,
+    session,
+    proposal: WorkflowProposal,
+    payload: Dict[str, Any],
+    state: AgentState,
+) -> Dict[str, Any]:
+    """
+    Persist the user's same/separate clarification as revision N+1.
+
+    The original log_expense tool call remains unchanged, but the
+    duplicate ambiguity is now explicitly resolved.
+
+    A subsequent yes/no is still required before mutation.
+    """
+
+    actions = list(
+        payload.get("planned_actions")
+        or []
+    )
+
+    index = int(
+        payload.get(
+            "current_action_index",
+            0,
+        )
+        or 0
+    )
+
+    if not (
+        0 <= index < len(actions)
+    ):
+        raise ConfirmationPersistenceError(
+            "The pending expense cannot be "
+            "resolved safely."
+        )
+
+    pending_tool_call = payload.get(
+        "pending_tool_call"
+    )
+
+    if not isinstance(
+        pending_tool_call,
+        dict,
+    ):
+        raise ConfirmationPersistenceError(
+            "The pending expense has no "
+            "saved tool call."
+        )
+
+    args = dict(
+        pending_tool_call.get("args")
+        or {}
+    )
+
+    next_revision = (
+        int(proposal.revision or 1)
+        + 1
+    )
+
+    revised_payload = dict(payload)
+
+    revised_payload.update(
+        {
+            "duplicate_status": "RESOLVED",
+
+            "duplicate_details": (
+                "The user confirmed that this is "
+                "a separate purchase."
+            ),
+
+            "consistency_status": "CLEAR",
+
+            "duplicate_resolution": {
+                "resolution_type": (
+                    "same_or_separate"
+                ),
+                "choice": (
+                    "create_separate"
+                ),
+            },
+
+            "edit_metadata": {
+                "edited_from_proposal_id": str(
+                    proposal.proposal_id
+                ),
+                "previous_revision": int(
+                    proposal.revision
+                    or 1
+                ),
+                "user_edit_request": str(
+                    state.get("message")
+                    or ""
+                ),
+                "explicit_duplicate_resolution": (
+                    True
+                ),
+            },
+        }
+    )
+
+    proposal.revision = next_revision
+
+    proposal.payload_json = (
+        _canonical_json(
+            revised_payload
+        )
+    )
+
+    proposal.args_hash = (
+        _payload_hash(
+            revised_payload
+        )
+    )
+
+    proposal.status = (
+        "AWAITING_REVIEW"
+    )
+
+    proposal.approved_by = None
+    proposal.approved_at = None
+    proposal.updated_at = utcnow()
+
+    proposal.expires_at = (
+        utcnow()
+        + timedelta(
+            hours=(
+                DEFAULT_CONFIRMATION_TTL_HOURS
+            )
+        )
+    )
+
+    proposal.last_error = None
+
+    session.commit()
+    session.refresh(proposal)
+
+    amount = args.get(
+        "amount_minor"
+    )
+
+    try:
+        amount_text = "{0:.2f}".format(
+            int(amount) / 100.0
+        )
+    except (TypeError, ValueError):
+        amount_text = str(
+            amount
+            or "the proposed amount"
+        )
+
+    currency = str(
+        args.get("currency")
+        or ""
+    ).strip()
+
+    description = str(
+        args.get("description")
+        or args.get("category")
+        or "the expense"
+    ).strip()
+
+    occurred_at = str(
+        args.get("occurred_at")
+        or ""
+    ).strip()
+
+    date_text = (
+        occurred_at[:10]
+        if occurred_at
+        else "the proposed date"
+    )
+
+    summary = "{0} {1} for {2} on {3}".format(
+        amount_text,
+        currency,
+        description,
+        date_text,
+    ).strip()
+
+    return {
+        "confirmation_resolution": (
+            "revised_review"
+        ),
+
+        "confirmation_kind": (
+            payload.get(
+                "confirmation_kind"
+            )
+            or proposal.kind
+        ),
+
+        "workflow_proposal_id": str(
+            proposal.proposal_id
+        ),
+
+        "editing_workflow_proposal_id": None,
+        "pending_edit_context": None,
+
+        "force_action_review": False,
+
+        "planned_actions": actions,
+        "current_action_index": index,
+
+        "pending_tool_call": None,
+        "pending_ai_message": None,
+
+        "duplicate_status": "RESOLVED",
+        "duplicate_details": (
+            revised_payload[
+                "duplicate_details"
+            ]
+        ),
+        "duplicate_match": (
+            payload.get(
+                "duplicate_match"
+            )
+        ),
+
+        "awaiting_confirmation": True,
+        "finished": True,
+
+        "response": (
+            "Okay, this is a separate purchase.\n"
+            "Proposed expense: {0}.\n"
+            "Reply yes to confirm logging this expense "
+            "or no to cancel."
+        ).format(summary),
+    }
 
 def _explicit_duplicate_quantity_resolution(
 
@@ -1669,6 +2197,13 @@ def _build_confirmation_payload(state: AgentState) -> Dict[str, Any]:
         "duplicate_details": state.get("duplicate_details"),
 
         "duplicate_match": state.get("duplicate_match"),
+        "consistency_status": state.get(
+            "consistency_status"
+        ),
+        "consistency_results": list(
+            state.get("consistency_results")
+            or []
+        ),
 
         "confirmation_kind": (
 
@@ -3140,6 +3675,68 @@ def _resume_document_action_confirmation(
     }
 
 
+
+def _build_appliance_clarification_resume(
+    *,
+    tool_name: str,
+    raw_tool_args: Dict[str, Any],
+    clarification_context: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Rebuild the exact saved call for appliance clarification only.
+
+    Ordinary clarification replies still go back through the specialist so
+    missing values such as quantities or dates can be incorporated normally.
+    Appliance identity replies are already interpreted deterministically by
+    clarification.py and therefore should not depend on an LLM regenerating
+    the original repair/task call from a reply such as "yes" or "2".
+    """
+
+    appliance_resolution = clarification_context.get(
+        "appliance_resolution"
+    )
+
+    if not isinstance(
+        appliance_resolution,
+        dict,
+    ):
+        return None
+
+    if tool_name not in {
+        "log_repair",
+        "create_task",
+    }:
+        return None
+
+    tool_call_id = (
+        "appliance-clarification-resume-"
+        + uuid4().hex
+    )
+
+    pending_tool_call = {
+        "name": tool_name,
+        "args": dict(raw_tool_args),
+        "id": tool_call_id,
+    }
+
+    pending_ai_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": tool_name,
+                "args": dict(raw_tool_args),
+                "id": tool_call_id,
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    return {
+        "pending_tool_call": pending_tool_call,
+        "pending_ai_message": pending_ai_message,
+    }
+
+
+
 def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
     """Resolve approval/rejection/edit before normal planning.
@@ -3187,6 +3784,12 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
     message = str(state.get("message", ""))
 
     normalized_message = _normalize_reply(message)
+
+    same_or_separate_choice = (
+        _same_or_separate_choice(
+            message
+        )
+    )
 
     is_pure_workflow_control = normalized_message in (
 
@@ -3372,7 +3975,272 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
     selected_kind = selected["kind"]
 
+    if selected_kind == CLARIFICATION_KIND:
+        try:
+            clarification_pending = load_pending_clarification(
+                routed_state
+            )
+        except ClarificationWorkflowError:
+            return {
+                "confirmation_resolution": "error",
+                "clarification_needed": False,
+                "clarification_context": None,
+                "awaiting_confirmation": False,
+                "finished": True,
+                "response": (
+                    "I couldn't safely restore the pending "
+                    "clarification. Please repeat the original request."
+                ),
+            }
 
+        if clarification_pending is None:
+            return {
+                "confirmation_resolution": "none",
+            }
+
+        proposal_id = str(
+            clarification_pending.get("proposal_id")
+            or ""
+        )
+
+        payload = dict(
+            clarification_pending.get("payload")
+            or {}
+        )
+
+        clarification_context = dict(
+            payload.get("clarification_context")
+            or {}
+        )
+
+        actions = list(
+            payload.get("planned_actions")
+            or []
+        )
+
+        try:
+            index = int(
+                payload.get(
+                    "current_action_index",
+                    0,
+                )
+                or 0
+            )
+        except (TypeError, ValueError):
+            index = -1
+
+        if (
+            index < 0
+            or index >= len(actions)
+            or not isinstance(
+                actions[index],
+                dict,
+            )
+        ):
+            return {
+                "confirmation_resolution": "error",
+                "clarification_needed": False,
+                "clarification_context": None,
+                "awaiting_confirmation": False,
+                "finished": True,
+                "response": (
+                    "The pending clarification could not "
+                    "be restored safely. Please repeat "
+                    "the original request."
+                ),
+            }
+
+        tool_name = str(
+            clarification_context.get(
+                "tool_name"
+            )
+            or ""
+        ).strip()
+
+        raw_tool_args = (
+            clarification_context.get(
+                "tool_args"
+            )
+            or {}
+        )
+
+        if (
+            not tool_name
+            or not isinstance(
+                raw_tool_args,
+                dict,
+            )
+        ):
+            return {
+                "confirmation_resolution": "error",
+                "clarification_needed": False,
+                "clarification_context": None,
+                "awaiting_confirmation": False,
+                "finished": True,
+                "response": (
+                    "The pending clarification is incomplete. "
+                    "Please repeat the original request."
+                ),
+            }
+
+        # "no", "cancel", etc. cancel the pending
+        # action instead of becoming the missing value.
+        if normalized_message in NO_RESPONSES:
+            try:
+                cancel_pending_clarification(
+                    routed_state
+                )
+            except ClarificationWorkflowError:
+                return {
+                    "confirmation_resolution": "error",
+                    "clarification_needed": False,
+                    "clarification_context": None,
+                    "awaiting_confirmation": False,
+                    "finished": True,
+                    "response": (
+                        "I couldn't safely cancel the "
+                        "pending clarification."
+                    ),
+                }
+
+            cancelled_actions = list(actions)
+
+            cancelled_action = dict(
+                cancelled_actions[index]
+            )
+
+            cancelled_action["status"] = "cancelled"
+            cancelled_action["result"] = (
+                "Cancelled while waiting for clarification."
+            )
+
+            cancelled_actions[index] = (
+                cancelled_action
+            )
+
+            return {
+                "confirmation_resolution": "cancelled",
+                "confirmation_kind": CLARIFICATION_KIND,
+                "workflow_proposal_id": proposal_id,
+                "clarification_needed": False,
+                "clarification_context": None,
+                "pending_edit_context": None,
+                "planned_actions": cancelled_actions,
+                "current_action_index": index,
+                "pending_tool_call": None,
+                "pending_ai_message": None,
+                "awaiting_confirmation": False,
+                "finished": True,
+                "response": (
+                    "Okay, I cancelled that pending action."
+                ),
+            }
+
+        current_action = dict(
+            actions[index]
+        )
+
+        pending_edit_context = {
+            "proposal_id": proposal_id,
+            "revision": int(
+                clarification_pending.get(
+                    "revision"
+                )
+                or 1
+            ),
+            "confirmation_kind": (
+                CLARIFICATION_KIND
+            ),
+            "current_action_index": index,
+            "current_action": current_action,
+            "pending_tool_call": {
+                "name": tool_name,
+                "args": dict(
+                    raw_tool_args
+                ),
+            },
+            "missing_field": (
+                clarification_context.get(
+                    "missing_field"
+                )
+            ),
+            "clarification_question": (
+                payload.get("question")
+            ),
+        }
+
+        appliance_resume = (
+            _build_appliance_clarification_resume(
+                tool_name=tool_name,
+                raw_tool_args=dict(
+                    raw_tool_args
+                ),
+                clarification_context=(
+                    clarification_context
+                ),
+            )
+        )
+
+        if appliance_resume is not None:
+            return {
+                "confirmation_resolution": (
+                    "appliance_clarification_resume"
+                ),
+                "confirmation_kind": (
+                    CLARIFICATION_KIND
+                ),
+                "workflow_proposal_id": (
+                    proposal_id
+                ),
+                "clarification_needed": False,
+                "clarification_context": (
+                    clarification_context
+                ),
+                "pending_edit_context": (
+                    pending_edit_context
+                ),
+                "planned_actions": actions,
+                "current_action_index": index,
+                "pending_tool_call": (
+                    appliance_resume[
+                        "pending_tool_call"
+                    ]
+                ),
+                "pending_ai_message": (
+                    appliance_resume[
+                        "pending_ai_message"
+                    ]
+                ),
+                "awaiting_confirmation": False,
+                "finished": False,
+                "response": "",
+            }
+
+        return {
+            "confirmation_resolution": (
+                "clarification_resume"
+            ),
+            "confirmation_kind": (
+                CLARIFICATION_KIND
+            ),
+            "workflow_proposal_id": (
+                proposal_id
+            ),
+            "clarification_needed": False,
+            "clarification_context": (
+                clarification_context
+            ),
+            "pending_edit_context": (
+                pending_edit_context
+            ),
+            "planned_actions": actions,
+            "current_action_index": index,
+            "pending_tool_call": None,
+            "pending_ai_message": None,
+            "awaiting_confirmation": False,
+            "finished": False,
+            "response": "",
+        }
 
     if selected_kind == "document":
 
@@ -3428,12 +4296,13 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
     if selected_kind == DOCUMENT_ACTION_KIND:
 
-        if decision is None and edit_kind is None:
-
+        if (
+            decision is None
+            and edit_kind is None
+            and same_or_separate_choice is None
+        ):
             return {
-
                 "confirmation_resolution": "none",
-
             }
 
         try:
@@ -3522,34 +4391,79 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
         if is_native_suggestion_payload:
 
-            if (
+            suggestion = dict(
+                suggestion_payload.get(
+                    "suggestion"
+                )
+                or {}
+            )
 
-                decision is None
-
+            direct_detail_reply = (
+                suggestion_stage == "offered"
+                and decision is None
                 and edit_kind is None
+                and _is_direct_suggestion_detail_reply(
+                    message,
+                    suggestion,
+                )
+            )
 
+            if direct_detail_reply:
+                proposal_id = str(
+                    suggestion_pending.get(
+                        "proposal_id"
+                    )
+                    or ""
+                ).strip()
+
+                try:
+                    begin_suggestion_details(
+                        routed_state,
+                        proposal_id,
+                    )
+
+                    suggestion_pending = (
+                        load_pending_suggestion(
+                            routed_state
+                        )
+                    )
+
+                except SuggestionWorkflowError:
+                    suggestion_pending = None
+
+                if suggestion_pending is None:
+                    return {
+                        "confirmation_resolution": "error",
+                        "confirmation_kind": "suggestion",
+                        "awaiting_confirmation": False,
+                        "finished": True,
+                        "response": (
+                            "I couldn't safely continue "
+                            "the pending follow-up."
+                        ),
+                    }
+
+                return _resume_suggestion_confirmation(
+                    routed_state,
+                    suggestion_pending,
+                    None,
+                    None,
+                )
+
+            if (
+                decision is None
+                and edit_kind is None
                 and suggestion_stage != "collecting_details"
-
             ):
-
                 return {
-
                     "confirmation_resolution": "none",
-
                 }
 
-
-
             return _resume_suggestion_confirmation(
-
                 routed_state,
-
                 suggestion_pending,
-
                 decision,
-
                 edit_kind,
-
             )
 
         # A revised suggestion is intentionally stored in the normal chat
@@ -3558,12 +4472,13 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
 
 
-    if decision is None and edit_kind is None:
-
+    if (
+        decision is None
+        and edit_kind is None
+        and same_or_separate_choice is None
+    ):
         return {
-
             "confirmation_resolution": "none",
-
         }
 
 
@@ -3606,14 +4521,35 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
         )
 
-
-
         index = int(
 
             payload.get("current_action_index", 0) or 0
 
         )
+        if _is_expense_same_or_separate_review(
+            payload
+        ):
+            if same_or_separate_choice == "same":
+                return (
+                    _close_expense_duplicate_as_existing(
+                        session=session,
+                        proposal=proposal,
+                        payload=payload,
+                    )
+                )
 
+            if (
+                same_or_separate_choice
+                == "separate"
+            ):
+                return (
+                    _stage_expense_as_separate_for_confirmation(
+                        session=session,
+                        proposal=proposal,
+                        payload=payload,
+                        state=state,
+                    )
+                )
 
 
         if edit_kind == "prompt" and decision is None:
@@ -3784,7 +4720,30 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
             )
 
-
+            if _is_expense_same_or_separate_review(
+                payload
+            ):
+                return {
+                    "confirmation_resolution": (
+                        "edit_prompt"
+                    ),
+                    "confirmation_kind": (
+                        payload.get(
+                            "confirmation_kind"
+                        )
+                        or proposal.kind
+                    ),
+                    "workflow_proposal_id": str(
+                        proposal.proposal_id
+                    ),
+                    "awaiting_confirmation": True,
+                    "finished": True,
+                    "response": (
+                        _expense_duplicate_resolution_prompt(
+                            payload
+                        )
+                    ),
+                }
 
             if (
 
@@ -4048,7 +5007,11 @@ def route_after_resume(state: AgentState) -> str:
 
         return "authorize"
 
+    if resolution == "appliance_clarification_resume":
+        return "clarification_gate"
 
+    if resolution == "clarification_resume":
+        return "specialist"
 
     if resolution == "suggestion_confirmed":
 
@@ -4268,6 +5231,30 @@ def request_confirmation_node(state: AgentState) -> Dict[str, Any]:
 
     )
 
+    payload = _build_confirmation_payload(
+            state
+    )
+    if _is_expense_same_or_separate_review(
+        payload
+    ):
+        return {
+            "workflow_proposal_id": (
+                proposal_id
+            ),
+            "confirmation_kind": (
+                state.get(
+                    "confirmation_kind"
+                )
+                or "duplicate"
+            ),
+            "awaiting_confirmation": True,
+            "finished": True,
+            "response": (
+                _expense_duplicate_resolution_prompt(
+                    payload
+                )
+            ),
+        }
 
 
     if (

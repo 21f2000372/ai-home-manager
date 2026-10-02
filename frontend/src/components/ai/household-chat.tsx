@@ -111,6 +111,7 @@ export function HouseholdChat({
     { id: "assistant-welcome", role: "assistant", text: initialMessage },
   ]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<AttachedReceipt | null>(null);
@@ -133,6 +134,7 @@ export function HouseholdChat({
       vars: { message: string; file: File | null },
     ) => {
       if (result.conversation_id) setConversationId(result.conversation_id);
+      if (result.session_id)setConversationId(result.conversation_id);
       void onMessageProcessed?.(result);
       // Clear the attached receipt once it's been sent.
       if (receipt?.previewUrl) URL.revokeObjectURL(receipt.previewUrl);

@@ -53,8 +53,14 @@ class PlannedAction(TypedDict, total=False):
     display_result: Optional[str]
 
     # Provenance for loop prevention / cross-domain orchestration.
-    # explicit | cross_domain_suggestion | cross_domain_suggestion_continuation
+    # explicit | dependency | cross_domain_suggestion |
+    # cross_domain_suggestion_continuation
     origin: Optional[str]
+
+    # Trusted server-side prerequisite metadata. Never populate this directly
+    # from user text. Current use: add an appliance record before resuming the
+    # exact saved repair/service action.
+    dependency_context: Optional[Dict[str, Any]]
 
 
 class AgentState(TypedDict, total=False):
@@ -153,7 +159,11 @@ class AgentState(TypedDict, total=False):
     # Trusted server-side context carried into a user-accepted follow-up.
     # This is never accepted directly from client input.
     suggestion_context: Optional[Dict[str, Any]]
-
+    # ------------------------------------------------------------------
+    # Clarification
+    # ------------------------------------------------------------------
+    clarification_needed: bool
+    clarification_context: Optional[Dict[str, Any]]
     # ------------------------------------------------------------------
     # Confirmation / durable-review handoff
     # ------------------------------------------------------------------
@@ -265,3 +275,4 @@ class AgentState(TypedDict, total=False):
 
     # DEPRECATED: compatibility alias for document_review during Step 3-5.
     document_preview: Optional[Dict[str, Any]]
+    

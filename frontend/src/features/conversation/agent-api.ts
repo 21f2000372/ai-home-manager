@@ -160,7 +160,11 @@ export type AgentMessageResponse = {
   response: string;
   planned_actions: PlannedAction[];
   interaction_id: string | null;
+
   conversation_id: string | null;
+  session_id: string | null;
+
+  awaiting_confirmation?: boolean;
   error: string | null;
   document?: AgentDocument | null;
   awaiting_confirmation?: boolean;

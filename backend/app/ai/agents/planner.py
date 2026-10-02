@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from typing import List, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -55,7 +56,9 @@ Domains:
 - tasks: to-dos, chores, reminders, calendar/scheduled activities
 - food: grocery list and household food inventory
 - maintenance: appliances, issues, maintenance and repairs
-- documents: document metadata/records
+- documents: search, list, read, retrieve, view, download,
+  or inspect previously uploaded/approved household documents,
+  including document metadata and records
 - general: no household action or unresolved ambiguity
 
 Rules:
@@ -82,7 +85,26 @@ Rules:
   apples", is finance. The cross-domain layer can later offer the inventory
   follow-up; do not invent that second action here.
 - Already-paid spending is finance. Create a budget only when explicitly asked.
-- Document CRUD/metadata requests are documents.
+- Repair/service intent takes precedence over incidental price information:
+  a request whose primary action is to log or record an appliance repair/service
+  is maintenance even when it includes provider, date, or cost. Example:
+  "Log today's geyser repair for Rs 2500 by CoolCare" is ONE maintenance action.
+  The deterministic cross-domain layer may later offer to log the repair cost
+  as a finance expense; do not convert the repair itself into an expense here.
+- Spending-centered repair language remains finance. Example:
+  "I spent Rs 2500 on geyser repair today" or an explicit request to
+  "log the repair expense" is finance.
+- Requests to search for, find, list, read, retrieve, view,
+  download, inspect, or get a previously uploaded document
+  MUST use the documents domain.
+- A request such as "get my previous electricity bill",
+  "find the invoice from ABC", "show the uploaded warranty",
+  or "retrieve that document" is a documents action.
+- A previous failed tool result such as "unavailable",
+  "not found", or "try again later" is historical context only.
+  Never copy that previous failure into the current action or
+  assume the document is currently unavailable without executing
+  the appropriate document tool again.
 
 Accepted cross-domain follow-up:
 - If ACCEPTED CROSS-DOMAIN FOLLOW-UP CONTEXT is present, the user has already
@@ -100,6 +122,96 @@ Pending-action edit:
 - Do not execute anything. If the edit is ambiguous, return a general action
   requesting clarification.
 """.strip()
+
+
+_REPAIR_OR_SERVICE_RE = re.compile(
+    r"\b(?:repair|repairs|repaired|repairing|service|serviced|servicing)\b",
+    flags=re.IGNORECASE,
+)
+
+_REPAIR_RECORD_COMMAND_RE = re.compile(
+    r"\b(?:log|record|add)\b.{0,90}\b(?:repair|repairs|service)\b",
+    flags=re.IGNORECASE,
+)
+
+_PASSIVE_REPAIR_RECORD_RE = re.compile(
+    r"\b(?:was|were|has been|have been)?\s*(?:repaired|serviced)\b",
+    flags=re.IGNORECASE,
+)
+
+_EXPLICIT_FINANCE_REQUEST_RE = re.compile(
+    r"\b(?:log|record|add)\b.{0,60}\b(?:expense|payment)\b"
+    r"|\b(?:expense|payment)\b.{0,60}\b(?:log|record|add)\b",
+    flags=re.IGNORECASE,
+)
+
+_SPENDING_CENTERED_RE = re.compile(
+    r"^\s*(?:i|we)\s+(?:spent|paid|spend|pay)\b"
+    r"|\b(?:repair|service)\s+bill\b"
+    r"|\bbill\s+for\s+(?:the\s+)?(?:repair|service)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _apply_repair_domain_guard(
+    message: str,
+    actions: List[dict],
+) -> List[dict]:
+    """Correct one narrow planner ambiguity deterministically.
+
+    A repair/service record remains Maintenance when price/provider metadata is
+    incidental. Explicit expense/payment or spending-centered requests remain
+    Finance. Multi-action plans are never rewritten here.
+    """
+
+    if len(actions) != 1:
+        return actions
+
+    raw_message = str(message or "").strip()
+    if not raw_message:
+        return actions
+
+    if _REPAIR_OR_SERVICE_RE.search(raw_message) is None:
+        return actions
+
+    current = actions[0]
+    if not isinstance(current, dict):
+        return actions
+
+    # Only correct the observed misclassification. Never rewrite another
+    # non-finance domain or an already-correct Maintenance action.
+    if str(current.get("domain") or "").strip() != "finance":
+        return actions
+
+    explicit_finance_request = (
+        _EXPLICIT_FINANCE_REQUEST_RE.search(raw_message)
+        is not None
+    )
+
+    spending_centered = (
+        _SPENDING_CENTERED_RE.search(raw_message)
+        is not None
+    )
+
+    repair_record_request = (
+        _REPAIR_RECORD_COMMAND_RE.search(raw_message)
+        is not None
+        or _PASSIVE_REPAIR_RECORD_RE.search(raw_message)
+        is not None
+    )
+
+    if (
+        not repair_record_request
+        or explicit_finance_request
+        or spending_centered
+    ):
+        return actions
+
+    corrected = dict(current)
+    corrected["domain"] = "maintenance"
+    corrected["intent"] = "log repair"
+
+    return [corrected]
 
 
 def _safe_json(value) -> str:
@@ -188,6 +300,15 @@ def planner_node(state: AgentState) -> dict:
         }
         for action in result.actions
     ]
+
+    if (
+        not state.get("pending_edit_context")
+        and not state.get("suggestion_context")
+    ):
+        actions = _apply_repair_domain_guard(
+            str(state.get("message") or ""),
+            actions,
+        )
 
     return {
         "planned_actions": actions,

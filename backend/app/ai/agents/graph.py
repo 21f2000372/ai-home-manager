@@ -58,6 +58,10 @@ from app.ai.agents.suggestions import (
     suggestion_approve_node,
     suggestion_authorize_node,
 )
+from app.ai.agents.clarification import (
+    clarification_node,
+    route_after_clarification,
+)
 from app.ai.agents.state import (
     AgentState,
     DEFAULT_MAX_ITERATIONS,
@@ -159,7 +163,10 @@ def build_graph():
         "duplicate_check",
         duplicate_check_node,
     )
-
+    graph.add_node(
+        "clarification_gate",
+        clarification_node,
+    )
     graph.add_node(
         "request_confirmation",
         request_confirmation_node,
@@ -260,6 +267,8 @@ def build_graph():
         route_after_resume,
         {
             "retrieve": "retrieve",
+            "specialist": "specialist",
+            "clarification_gate": "clarification_gate",
             "authorize": "authorize",
             "suggestion_authorize": "suggestion_authorize",
             "document_execute": "document_execute",
@@ -294,14 +303,21 @@ def build_graph():
         "specialist",
         route_after_specialist,
         {
-            # Keep the existing public route name. The duplicate node still
-            # intercepts the call before authorization in this refactor step.
+            "clarification_gate": "clarification_gate",
+            "next_action": "next_action",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "clarification_gate",
+        route_after_clarification,
+        {
+            # Preserve the existing public route name mapping to duplicate_check
             "authorize": "duplicate_check",
             "suggestion_authorize": "suggestion_authorize",
             "next_action": "next_action",
         },
     )
-
     graph.add_conditional_edges(
         "duplicate_check",
         route_after_duplicate,
@@ -346,6 +362,7 @@ def build_graph():
         route_after_action,
         {
             "specialist": "specialist",
+            "clarification_gate": "clarification_gate",
             "cross_domain_suggestion": "cross_domain_suggestion",
         },
     )
@@ -471,7 +488,8 @@ def run_agent(
         "tool_result": None,
         "authorized": False,
         "auth_error": None,
-
+        "clarification_needed":False,
+        "clarification_context": None,
         # Existing normal-chat duplicate state. This remains authoritative
         # until the shared consistency service is introduced.
         "duplicate_status": None,

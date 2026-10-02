@@ -192,12 +192,58 @@ def create_task(
         )
 
         if task is None:
-            return "Could not create the task due to a scheduling conflict."
+            conflict_parts = []
 
-        result = f"Created task '{title}' (id={task.task_id})."
+            for conflict in conflicts.get(
+                "task_conflicts",
+                [],
+            ):
+                conflict_parts.append(
+                    "task '{}'".format(
+                        conflict.get(
+                            "title",
+                            "existing task",
+                        )
+                    )
+                )
+
+            for conflict in conflicts.get(
+                "calendar_conflicts",
+                [],
+            ):
+                conflict_parts.append(
+                    "calendar event '{}'".format(
+                        conflict.get(
+                            "title",
+                            "existing event",
+                        )
+                    )
+                )
+
+            details = (
+                ", ".join(conflict_parts)
+                if conflict_parts
+                else "an existing schedule item"
+            )
+
+            return (
+                "Failed to create task because it "
+                "conflicts with {}.".format(
+                    details
+                )
+            )
+
+        result = (
+            "Created task '{}' (id={}).".format(
+                title,
+                task.task_id,
+            )
+        )
 
         if parsed_due_at:
-            result += f" Due: {parsed_due_at.isoformat()}."
+            result += " Due: {}.".format(
+                parsed_due_at.isoformat()
+            )
 
         if assigned_to_id:
             names = _member_names(session, [assigned_to_id])
