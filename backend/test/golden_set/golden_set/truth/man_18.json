@@ -1,0 +1,34 @@
+{
+  "doc_id": "man_18",
+  "file": "man_18.pdf",
+  "category": "manual",
+  "difficulty": "easy",
+  "doc_type": "manual",
+  "facts": {
+    "brand": "Zenova",
+    "product": "Air Cooler",
+    "model": "T685",
+    "rated_power_w": 180,
+    "rated_voltage_v": 230,
+    "capacity_l": 40
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "qa": [
+    {
+      "q": "What should I do if: unusual noise?",
+      "a": "Unplug and contact an authorised service centre"
+    },
+    {
+      "q": "What should I do if: unit does not start?",
+      "a": "Check the socket and reset the overload protector"
+    },
+    {
+      "q": "What is the rated power?",
+      "a": "180 W"
+    }
+  ],
+  "expected_behavior": {
+    "note": "Index for Q&A. Do not propose tasks."
+  }
+}

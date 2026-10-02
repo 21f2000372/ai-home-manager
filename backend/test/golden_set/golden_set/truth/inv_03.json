@@ -1,0 +1,51 @@
+{
+  "doc_id": "inv_03",
+  "file": "inv_03.pdf",
+  "category": "printed_invoice",
+  "difficulty": "easy",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "Anand Kirana Store",
+    "invoice_number": "INV-3308",
+    "date": "2026-05-10",
+    "items": [
+      {
+        "name": "Geyser element replacement",
+        "qty": 3,
+        "rate": 1750,
+        "amount": 5250.0
+      },
+      {
+        "name": "Mixer grinder repair",
+        "qty": 2,
+        "rate": 650,
+        "amount": 1300.0
+      },
+      {
+        "name": "Tap replacement",
+        "qty": 1,
+        "rate": 1200,
+        "amount": 1200.0
+      },
+      {
+        "name": "Water purifier filter",
+        "qty": 3,
+        "rate": 2400,
+        "amount": 7200.0
+      },
+      {
+        "name": "AC servicing",
+        "qty": 3,
+        "rate": 1800,
+        "amount": 5400.0
+      }
+    ],
+    "subtotal": 20350.0,
+    "tax": 3663.0,
+    "total": 24013.0,
+    "payment_status": "paid",
+    "due_date": null
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

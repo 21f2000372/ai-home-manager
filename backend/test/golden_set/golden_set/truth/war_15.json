@@ -1,0 +1,22 @@
+{
+  "doc_id": "war_15",
+  "file": "war_15.jpg",
+  "category": "warranty_card",
+  "difficulty": "medium",
+  "doc_type": "warranty",
+  "facts": {
+    "brand": "Novatec",
+    "product": "Water Heater",
+    "model": "T499",
+    "serial": "SN29936204",
+    "purchase_date": "2026-03-26",
+    "warranty_months": 36,
+    "installation_date": null,
+    "expiry_date": null
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {
+    "note": "Coverage dates absent from the card must stay null; do not compute them."
+  }
+}

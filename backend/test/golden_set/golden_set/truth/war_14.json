@@ -1,0 +1,20 @@
+{
+  "doc_id": "war_14",
+  "file": "war_14.jpg",
+  "category": "warranty_card",
+  "difficulty": "medium",
+  "doc_type": "warranty",
+  "facts": {
+    "brand": "Novatec",
+    "product": "Microwave Oven",
+    "model": "M527",
+    "serial": "SN99731916",
+    "purchase_date": "2026-03-20",
+    "warranty_months": 36,
+    "installation_date": "2026-03-22",
+    "expiry_date": "2029-03-20"
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "expected_behavior": {}
+}

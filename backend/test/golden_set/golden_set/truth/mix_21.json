@@ -1,0 +1,106 @@
+{
+  "doc_id": "mix_21",
+  "file": "mix_21.pdf",
+  "category": "mixed_bundle",
+  "difficulty": "hard",
+  "doc_type": "mixed",
+  "facts": {
+    "invoice": {
+      "vendor": "CoolAir Services",
+      "invoice_number": "INV-1445",
+      "date": "2026-09-26",
+      "items": [
+        {
+          "name": "Gas refill",
+          "qty": 1,
+          "rate": 950,
+          "amount": 950.0
+        },
+        {
+          "name": "Refrigerator gas top-up",
+          "qty": 2,
+          "rate": 2200,
+          "amount": 4400.0
+        },
+        {
+          "name": "Labour charges",
+          "qty": 3,
+          "rate": 500,
+          "amount": 1500.0
+        },
+        {
+          "name": "Geyser element replacement",
+          "qty": 2,
+          "rate": 1750,
+          "amount": 3500.0
+        },
+        {
+          "name": "AC servicing",
+          "qty": 2,
+          "rate": 1800,
+          "amount": 3600.0
+        }
+      ],
+      "subtotal": 13950.0,
+      "tax": 2511.0,
+      "total": 16461.0,
+      "payment_status": "paid",
+      "due_date": null
+    },
+    "warranty": {
+      "brand": "Kiraya",
+      "product": "Air Cooler",
+      "model": "M735",
+      "serial": "SN47644351",
+      "purchase_date": "2026-03-12",
+      "warranty_months": 36,
+      "installation_date": "2026-03-14",
+      "expiry_date": "2029-03-12"
+    },
+    "manual": {
+      "brand": "Novatec",
+      "product": "Water Heater",
+      "model": "M900",
+      "rated_power_w": 2000,
+      "rated_voltage_v": 230,
+      "capacity_l": 15
+    }
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "sections": [
+    {
+      "type": "invoice",
+      "pages": [
+        1
+      ]
+    },
+    {
+      "type": "warranty",
+      "pages": [
+        2
+      ]
+    },
+    {
+      "type": "manual",
+      "pages": [
+        3,
+        4
+      ]
+    }
+  ],
+  "qa": [
+    {
+      "q": "What should I do if: unusual noise?",
+      "a": "Unplug and contact an authorised service centre"
+    },
+    {
+      "q": "What should I do if: water leaks from the base?",
+      "a": "Stop using the unit and replace the seal"
+    },
+    {
+      "q": "What is the rated power?",
+      "a": "2000 W"
+    }
+  ]
+}

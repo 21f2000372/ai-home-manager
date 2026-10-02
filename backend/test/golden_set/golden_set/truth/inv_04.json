@@ -1,0 +1,51 @@
+{
+  "doc_id": "inv_04",
+  "file": "inv_04.pdf",
+  "category": "printed_invoice",
+  "difficulty": "easy",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "Home Care Plumbing",
+    "invoice_number": "INV-9296",
+    "date": "2026-09-16",
+    "items": [
+      {
+        "name": "AC servicing",
+        "qty": 2,
+        "rate": 1800,
+        "amount": 3600.0
+      },
+      {
+        "name": "Refrigerator gas top-up",
+        "qty": 2,
+        "rate": 2200,
+        "amount": 4400.0
+      },
+      {
+        "name": "Geyser element replacement",
+        "qty": 1,
+        "rate": 1750,
+        "amount": 1750.0
+      },
+      {
+        "name": "Mixer grinder repair",
+        "qty": 2,
+        "rate": 650,
+        "amount": 1300.0
+      },
+      {
+        "name": "Water purifier filter",
+        "qty": 3,
+        "rate": 2400,
+        "amount": 7200.0
+      }
+    ],
+    "subtotal": 18250.0,
+    "tax": 3285.0,
+    "total": 21535.0,
+    "payment_status": "unpaid",
+    "due_date": "2026-09-23"
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

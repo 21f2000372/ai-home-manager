@@ -1,0 +1,55 @@
+{
+  "doc_id": "hwg_28",
+  "file": "hwg_28.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "hard",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "potatoes",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "rice",
+        "qty": null,
+        "unit": null
+      },
+      {
+        "name": "tea powder",
+        "qty": 250,
+        "unit": "g"
+      },
+      {
+        "name": "sugar",
+        "qty": 0.5,
+        "unit": "kg"
+      },
+      {
+        "name": "paneer",
+        "qty": 200,
+        "unit": "g"
+      },
+      {
+        "name": "curd",
+        "qty": 500,
+        "unit": "g"
+      },
+      {
+        "name": "wheat flour",
+        "qty": 2,
+        "unit": "kg"
+      }
+    ]
+  },
+  "unreadable": [
+    "items[1].qty",
+    "items[1].unit"
+  ],
+  "should_clarify": true,
+  "crossed_out_items": [],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "doc_id": "inv_08",
+  "file": "inv_08.pdf",
+  "category": "printed_invoice",
+  "difficulty": "medium",
+  "doc_type": "invoice",
+  "facts": {
+    "vendor": "CoolAir Services",
+    "invoice_number": "INV-7975",
+    "date": "2026-09-09",
+    "items": [
+      {
+        "name": "Labour charges",
+        "qty": 2,
+        "rate": 500,
+        "amount": 1000.0
+      },
+      {
+        "name": "Water purifier filter",
+        "qty": 2,
+        "rate": 2400,
+        "amount": 4800.0
+      },
+      {
+        "name": "Tap replacement",
+        "qty": 1,
+        "rate": 1200,
+        "amount": 1200.0
+      },
+      {
+        "name": "Geyser element replacement",
+        "qty": 2,
+        "rate": 1750,
+        "amount": 3500.0
+      },
+      {
+        "name": "AC servicing",
+        "qty": 3,
+        "rate": 1800,
+        "amount": 5400.0
+      },
+      {
+        "name": "Gas refill",
+        "qty": 3,
+        "rate": 950,
+        "amount": 2850.0
+      }
+    ],
+    "subtotal": 18750.0,
+    "tax": 3375.0,
+    "total": 22125.0,
+    "payment_status": "unpaid",
+    "due_date": "2026-09-24"
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

@@ -1,0 +1,19 @@
+{
+  "doc_id": "bill_10",
+  "file": "bill_10.pdf",
+  "category": "printed_bill",
+  "difficulty": "easy",
+  "doc_type": "bill",
+  "facts": {
+    "vendor": "City Power Supply Co",
+    "consumer_number": "2766566614",
+    "period_start": "2026-02-07",
+    "period_end": "2026-04-07",
+    "units_consumed": 410,
+    "amount_due": 4653.0,
+    "due_date": "2026-04-22",
+    "payment_status": "unpaid"
+  },
+  "unreadable": [],
+  "should_clarify": false
+}

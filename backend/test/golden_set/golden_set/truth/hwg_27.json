@@ -1,0 +1,67 @@
+{
+  "doc_id": "hwg_27",
+  "file": "hwg_27.jpg",
+  "category": "handwritten_grocery",
+  "difficulty": "easy",
+  "doc_type": "grocery_list",
+  "facts": {
+    "items": [
+      {
+        "name": "bread",
+        "qty": 1,
+        "unit": "pcs"
+      },
+      {
+        "name": "rice",
+        "qty": 2,
+        "unit": "kg"
+      },
+      {
+        "name": "bananas",
+        "qty": 12,
+        "unit": "pcs"
+      },
+      {
+        "name": "sugar",
+        "qty": 1,
+        "unit": "kg"
+      },
+      {
+        "name": "tomatoes",
+        "qty": 1,
+        "unit": "kg"
+      },
+      {
+        "name": "milk",
+        "qty": 2,
+        "unit": "l"
+      },
+      {
+        "name": "eggs",
+        "qty": 6,
+        "unit": "pcs"
+      },
+      {
+        "name": "paneer",
+        "qty": 250,
+        "unit": "g"
+      },
+      {
+        "name": "cooking oil",
+        "qty": 5,
+        "unit": "l"
+      },
+      {
+        "name": "wheat flour",
+        "qty": 5,
+        "unit": "kg"
+      }
+    ]
+  },
+  "unreadable": [],
+  "should_clarify": false,
+  "crossed_out_items": [],
+  "expected_behavior": {
+    "note": "Shopping-list items only, not stocked inventory. Crossed-out entries excluded."
+  }
+}

@@ -34,7 +34,9 @@ from app.models.documents import (
     Conversation,
     Document,
     DocumentLink,
+    PendingDocumentUpload,
 )
+from app.models.workflows import ExecutionLedger, WorkflowProposal
 
 __all__ = [
     # enums
@@ -71,6 +73,10 @@ __all__ = [
     # documents / conversation
     "Document",
     "DocumentLink",
+    "PendingDocumentUpload",
     "Conversation",
     "AgentInteraction",
+    # durable workflow / execution
+    "WorkflowProposal",
+    "ExecutionLedger",
 ]
