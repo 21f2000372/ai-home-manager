@@ -151,6 +151,40 @@ def update_task(task_id: str):
     finally:
         session.close()
 
+@task_bp.route("/tasks/me", methods=["GET", "OPTIONS"])
+@login_required
+def get_my_tasks():
+    """Retrieve all tasks assigned to the currently logged-in user."""
+    if request.method == "OPTIONS":
+        return ("", 200)
+
+    status_filter = request.args.get("status")
+    parsed_status = TaskStatus(status_filter) if status_filter else None
+
+    session = SessionLocal()
+    try:
+        tasks = TaskService.list_user_tasks(
+            session=session,
+            user_id=g.current_user.user_id,
+            status=parsed_status,
+        )
+        return jsonify([
+            {
+                "task_id": t.task_id,
+                "title": t.title,
+                "description": t.description,
+                "assigned_to": t.assignee.display_name if t.assignee else None,
+                "assigned_to_id": t.assigned_to,
+                "due_at": t.due_at.isoformat() if t.due_at else None,
+                "priority": t.priority.value,
+                "status": t.status.value,
+                "created_at": t.created_at.isoformat(),
+            }
+            for t in tasks
+        ]), 200
+    finally:
+        session.close()
+
 
 @task_bp.route("/tasks/<string:task_id>/status", methods=["PATCH", "OPTIONS"])
 @login_required
@@ -309,6 +343,41 @@ def update_calendar_event(event_id: str):
     finally:
         session.close()
 
+@task_bp.route("/calendar/me", methods=["GET", "OPTIONS"])
+@login_required
+def get_my_calendar_events():
+    """Retrieve calendar events where the logged-in user is an owner or attendee."""
+    if request.method == "OPTIONS":
+        return ("", 200)
+
+    range_start = _parse_iso(request.args.get("start"))
+    range_end = _parse_iso(request.args.get("end"))
+
+    session = SessionLocal()
+    try:
+        events = CalendarService.list_user_events(
+            session=session,
+            user_id=g.current_user.user_id,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        return jsonify([
+            {
+                "event_id": e.event_id,
+                "title": e.title,
+                "starts_at": e.starts_at.isoformat(),
+                "ends_at": e.ends_at.isoformat(),
+                "owner_id": e.owner_id,
+                "attendees": [
+                    {"user_id": u.user_id, "name": u.display_name}
+                    for u in (e.attendees or [])
+                ],
+            }
+            for e in events
+        ]), 200
+    finally:
+        session.close()
+
 
 @task_bp.route("/calendar/<string:event_id>", methods=["DELETE", "OPTIONS"])
 @login_required
@@ -324,5 +393,89 @@ def delete_calendar_event(event_id: str):
         return jsonify({"message": "Calendar event deleted successfully"}), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
+    finally:
+        session.close()
+
+@task_bp.route("/schedule/overview", methods=["GET", "OPTIONS"])
+@login_required
+def get_combined_household_schedule():
+    """Fetch all tasks and calendar events in a single payload for the household.
+
+    Optional Query Parameters:
+      - user_id: Filter for a specific person ('me' or <user_id>)
+      - start: ISO datetime lower bound for calendar events
+      - end: ISO datetime upper bound for calendar events
+    """
+    if request.method == "OPTIONS":
+        return ("", 200)
+
+    user_param = request.args.get("user_id")
+    target_user_id = g.current_user.user_id if user_param == "me" else user_param
+
+    range_start = _parse_iso(request.args.get("start"))
+    range_end = _parse_iso(request.args.get("end"))
+
+    session = SessionLocal()
+    try:
+        # 1. Fetch Tasks (either user-specific or whole household)
+        if target_user_id:
+            tasks = TaskService.list_user_tasks(
+                session=session,
+                user_id=target_user_id,
+            )
+        else:
+            tasks = TaskService.list_tasks(
+                session=session,
+            )
+
+        # 2. Fetch Calendar Events (either user-specific or whole household)
+        if target_user_id:
+            events = CalendarService.list_user_events(
+                session=session,
+                user_id=target_user_id,
+                range_start=range_start,
+                range_end=range_end,
+            )
+        else:
+            events = CalendarService.list_events(
+                session=session,
+                range_start=range_start,
+                range_end=range_end,
+            )
+
+        return jsonify({
+            "tasks": [
+                {
+                    "task_id": t.task_id,
+                    "title": t.title,
+                    "description": t.description,
+                    "assigned_to": t.assignee.display_name if t.assignee else None,
+                    "assigned_to_id": t.assigned_to,
+                    "due_at": t.due_at.isoformat() if t.due_at else None,
+                    "priority": t.priority.value,
+                    "status": t.status.value,
+                    "created_at": t.created_at.isoformat(),
+                }
+                for t in tasks
+            ],
+            "calendar_events": [
+                {
+                    "event_id": e.event_id,
+                    "title": e.title,
+                    "starts_at": e.starts_at.isoformat(),
+                    "ends_at": e.ends_at.isoformat(),
+                    "owner_id": e.owner_id,
+                    "attendees": [
+                        {"user_id": u.user_id, "name": u.display_name}
+                        for u in (e.attendees or [])
+                    ],
+                }
+                for e in events
+            ],
+            "counts": {
+                "tasks_total": len(tasks),
+                "events_total": len(events),
+            },
+        }), 200
     finally:
         session.close()
