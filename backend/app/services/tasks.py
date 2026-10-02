@@ -148,6 +148,17 @@ class TaskService:
             status=TaskStatus.OPEN,
         )
         session.add(task)
+
+        if assigned_to_id and assigned_to_id != created_by_id:
+            from app.models.notifications import Notification
+            session.add(
+                Notification(
+                    user_id=assigned_to_id,
+                    title="New Task Assigned",
+                    message=f"You have been assigned: '{task.title}'",
+                )
+            )
+
         session.commit()
         return task, conflicts
 
@@ -269,12 +280,31 @@ class TaskService:
                 user_id=assigned_to_id or task.assigned_to,
                 exclude_task_id=task.task_id,
             )
+        old_assigned = task.assigned_to
 
         task.title = title.strip()
         task.description = description.strip() if description else None
         task.assigned_to = assigned_to_id
         task.due_at = due_at
         task.priority = priority
+
+        if assigned_to_id and assigned_to_id != old_assigned:
+            from app.models.notifications import Notification
+            session.add(
+                Notification(
+                    user_id=assigned_to_id,
+                    title="Task Reassigned to You",
+                    message=f"You have been assigned the task: '{task.title}'",
+                )
+            )
+        else:
+            session.add(
+                Notification(
+                    user_id=old_assigned,
+                    title="Task Updated",
+                    message=f"The task '{task.title}' has been updated.",
+                )
+            )
         session.commit()
         return task, conflicts
 
@@ -401,6 +431,18 @@ class CalendarService:
         )
         event.attendees = users
         session.add(event)
+
+        from app.models.notifications import Notification
+        for attendee in users:
+            if attendee.user_id != organizer_id:
+                session.add(
+                    Notification(
+                        user_id=attendee.user_id,
+                        title="New Calendar Event",
+                        message=f"You were added to '{event.title}' scheduled for {starts_at.strftime('%Y-%m-%d %H:%M')}",
+                    )
+                )
+                
         session.commit()
         return event, conflicts
 

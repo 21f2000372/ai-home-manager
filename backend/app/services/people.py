@@ -132,6 +132,25 @@ class PeopleService:
         )
 
         session.add(user)
+
+        from app.models.notifications import Notification
+        admins = (
+            session.query(Membership)
+            .filter(
+                Membership.role == HouseholdRole.ADMIN,
+                Membership.status == MembershipStatus.ACTIVE,
+            )
+            .all()
+        )
+        for admin_membership in admins:
+            session.add(
+                Notification(
+                    user_id=admin_membership.user_id,
+                    title="Member Pending Approval",
+                    message=f"{display_name} ({email}) joined via invite and requires role approval.",
+                )
+            )
+
         session.commit()
         return user
 
@@ -152,6 +171,16 @@ class PeopleService:
 
         membership.role = role
         membership.status = MembershipStatus.ACTIVE
+
+        from app.models.notifications import Notification
+        session.add(
+            Notification(
+                user_id=membership.user_id,
+                title="Membership Approved",
+                message=f"Your account has been approved with role '{role.value}'.",
+            )
+        )
+        
         session.commit()
         return membership
 
