@@ -37,6 +37,7 @@ from app.models.documents import (
     PendingDocumentUpload,
 )
 from app.models.workflows import ExecutionLedger, WorkflowProposal
+from app.models.notifications import Notification
 
 __all__ = [
     # enums
@@ -79,4 +80,7 @@ __all__ = [
     # durable workflow / execution
     "WorkflowProposal",
     "ExecutionLedger",
+    # notifications
+    "Notification",
+
 ]
