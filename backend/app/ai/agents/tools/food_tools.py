@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from langchain_core.tools import tool
+from sqlalchemy import func
 
 from app.db.base import SessionLocal
 from app.models.inventory import GroceryItem, InventoryItem
@@ -240,11 +241,38 @@ def add_inventory_item(
     unit: str = "",
     low_stock_threshold: Optional[float] = None,
 ) -> str:
-    """Add an item to household inventory."""
+    """Add stock to household inventory.
+
+    If an item with the same name already exists, its quantity is increased
+    (restocked) instead of creating a duplicate. Otherwise a new item is
+    created.
+    """
     session = SessionLocal()
     try:
+        # Match an existing item by name (case-insensitive) to avoid duplicates.
+        existing = (
+            session.query(InventoryItem)
+            .filter(func.lower(InventoryItem.name) == name.strip().lower())
+            .first()
+        )
+
+        if existing:
+            existing.quantity = float(existing.quantity) + float(quantity)
+            if unit:
+                existing.unit = unit
+            if low_stock_threshold is not None:
+                existing.low_stock_threshold = low_stock_threshold
+            session.commit()
+            session.refresh(existing)
+            return (
+                f"Restocked {name}: added {quantity}"
+                f"{(' ' + unit) if unit else ''}. "
+                f"New quantity: {float(existing.quantity)}. "
+                f"Inventory item id: {existing.item_id}"
+            )
+
         item = InventoryItem(
-            name=name,
+            name=name.strip(),
             quantity=quantity,
             unit=unit or None,
             low_stock_threshold=low_stock_threshold,
