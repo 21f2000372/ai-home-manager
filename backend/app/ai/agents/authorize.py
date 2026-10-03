@@ -59,12 +59,8 @@ def authorize_node(state: AgentState) -> dict:
 
 def route_after_specialist(state: AgentState) -> str:
     if state.get("pending_tool_call"):
-        # Cross-domain suggestion continuations receive an RBAC gate BEFORE
-        # duplicate/conflict lookup so a model revision cannot cause reads in
-        # a target domain the current role is not allowed to act on.
-        if state.get("confirmation_kind") == "suggestion":
-            return "suggestion_authorize"
-        return "authorize"
+        # Send all tool calls to the clarification gate first
+        return "clarification_gate"
 
     return "next_action"
 

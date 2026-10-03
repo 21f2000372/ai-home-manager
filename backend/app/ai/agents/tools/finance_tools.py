@@ -5,6 +5,10 @@ from datetime import date, datetime
 
 from langchain_core.tools import tool
 
+from app.ai.agents.request_context import (
+    AgentRequestContextError,
+    get_agent_request_identity,
+)
 from app.db.base import SessionLocal
 from app.models.enums import BudgetPeriod
 from app.models.finance import Budget, Expense, RecurringBill
@@ -20,6 +24,12 @@ def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
         raise ValueError(
             f"Invalid {field_name}. Use an ISO datetime."
         )
+
+
+def _authenticated_user_id() -> str:
+    """Return the server-verified user id for this agent invocation."""
+    identity = get_agent_request_identity()
+    return identity.user_id
 
 
 # ============================================================
@@ -48,12 +58,18 @@ def log_expense(
         except ValueError as exc:
             return str(exc)
 
+        try:
+            recorded_by = _authenticated_user_id()
+        except AgentRequestContextError as exc:
+            return str(exc)
+
         expense = Expense(
             amount_minor=amount_minor,
             currency=currency.upper(),
             category=category,
             description=description or None,
             occurred_at=parsed_occurred,
+            recorded_by=recorded_by,
             document_id=document_id or None,
         )
 
@@ -76,32 +92,88 @@ def log_expense(
 
 
 @tool
-def list_expenses(category: str = "") -> str:
-    """List recent expenses."""
+def list_expenses(
+    category: str = "",
+    scope: str = "mine",
+) -> str:
+    """List recent expenses.
+
+    scope='mine' filters by the authenticated user's recorded_by value.
+    scope='household' returns household-wide expenses. Use household scope
+    only when the user explicitly asks for all/household expenses.
+    """
     session = SessionLocal()
 
     try:
         query = session.query(Expense)
 
+        normalized_scope = (
+            scope or "mine"
+        ).strip().casefold()
+
+        if normalized_scope in {
+            "mine",
+            "my",
+            "self",
+        }:
+            try:
+                current_user_id = (
+                    _authenticated_user_id()
+                )
+            except AgentRequestContextError as exc:
+                return str(exc)
+
+            query = query.filter(
+                Expense.recorded_by
+                == current_user_id
+            )
+            heading = "Here are your recent expenses:"
+
+        elif normalized_scope in {
+            "household",
+            "all",
+        }:
+            heading = (
+                "Here are the household's recent expenses:"
+            )
+
+        else:
+            return (
+                "Invalid scope. Use 'mine' or 'household'."
+            )
+
         if category:
-            query = query.filter(Expense.category == category)
+            query = query.filter(
+                Expense.category == category
+            )
 
         rows = (
             query
-            .order_by(Expense.occurred_at.desc())
+            .order_by(
+                Expense.occurred_at.desc()
+            )
             .limit(20)
             .all()
         )
 
         if not rows:
-            return "No expenses found."
+            return (
+                "No household expenses found."
+                if normalized_scope
+                in {"household", "all"}
+                else "No expenses found for you."
+            )
 
-        return "\n".join(
+        lines = [
             f"- {e.occurred_at.date()}: "
             f"{e.amount_minor / 100:.2f} {e.currency} "
             f"({e.category}) "
             f"(id={e.expense_id})"
             for e in rows
+        ]
+
+        return "\n".join(
+            [heading] + lines
         )
 
     finally:

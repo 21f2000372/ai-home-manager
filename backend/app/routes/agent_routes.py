@@ -1,11 +1,7 @@
 """Chat and document endpoints for the LangGraph household agent.
 
-
-
 Compatible with Python 3.9.
-
 """
-
 
 
 from __future__ import annotations
@@ -26,7 +22,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 
-from flask import Blueprint, g, jsonify, request
+from flask import (
+    Blueprint,
+    g,
+    jsonify,
+    request,
+)
 
 from werkzeug.datastructures import FileStorage
 
@@ -63,7 +64,10 @@ from app.services.conversation_scope import (
 )
 
 
-
+from app.ai.agents.request_context import (
+    reset_agent_request_identity,
+    set_agent_request_identity,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -81,76 +85,54 @@ agent_bp = Blueprint(
 )
 
 
-
-
-
 def _run_for_current_user(
-
     *,
-
     message: str,
-
     session_id: str,
-
     conversation_id: str,
-
     uploaded_file: Optional[FileStorage] = None,
-
 ):
+    """Run the agent using authenticated server-side identity."""
 
-    """Run the agent using authenticated server-side identity.
-
-
-
-    Conversation and session ownership must be validated before this
-
-    function is called. The client cannot supply user_id or role.
-
-    """
-
-
-
-    user_token = set_agent_user_id(
-
+    user_id = str(
         g.current_user.user_id
-
     )
 
-    # Bind the verified identity the document/RAG tools read from context.
+    role = g.current_role.value
 
-    identity_tokens = set_agent_request_identity(
-
-        g.current_user.user_id,
-
-        g.current_role,
-
+    # Existing task-tool identity context.
+    user_token = set_agent_user_id(
+        user_id
     )
 
-
+    request_tokens = None
 
     try:
+        # Shared authenticated request context.
+        # Document tools read identity from here.
+        request_tokens = set_agent_request_identity(
+            user_id=user_id,
+            role=role,
+        )
 
         return run_agent(
-
             message=message,
-
             session_id=session_id,
-
-            user_id=g.current_user.user_id,
-
-            role=g.current_role.value,
-
+            user_id=user_id,
+            role=role,
             conversation_id=conversation_id,
-
             uploaded_file=uploaded_file,
-
         )
 
     finally:
+        if request_tokens is not None:
+            reset_agent_request_identity(
+                request_tokens
+            )
 
-        reset_agent_request_identity(identity_tokens)
-
-        reset_agent_user_id(user_token)
+        reset_agent_user_id(
+            user_token
+        )
 
 
 
@@ -458,9 +440,6 @@ def _public_original_document(
         }
 
     return None
-
-
-
 
 
 def _public_planned_actions(
@@ -978,26 +957,19 @@ def agent_request():
 
     """Process an authenticated chat or document request.
 
+    Conversation continuity is explicit in the API contract:
 
+    - If both conversation_id and session_id are omitted, the server
+      resolves/creates a fresh conversation scope.
+    - If either identifier is supplied, the ownership service validates
+      exactly what the client supplied; no browser-session fallback is used.
+    - new_conversation=true forces both identifiers to be ignored so a
+      fresh conversation scope is created.
 
-    The frontend may omit conversation_id and session_id.
-
-
-
-    When both are omitted, the server creates a new conversation.
-
-
-
-    When either identifier is supplied, the server resolves and
-
-    validates it against the authenticated user before running the
-
-    agent.
-
-
+    Authentication remains server-side through login_required and
+    g.current_user/g.current_role.
 
     Every response after scope resolution returns both identifiers.
-
     """
 
 
@@ -1046,7 +1018,22 @@ def agent_request():
 
         ), 400
 
+    new_conversation = data.get(
+        "new_conversation",
+        False,
+    )
 
+    if not isinstance(
+        new_conversation,
+        bool,
+    ):
+        return jsonify(
+            {
+                "error": (
+                    "new_conversation must be a boolean"
+                )
+            }
+        ), 400
 
     message_value = data.get("message")
 
@@ -1127,61 +1114,63 @@ def agent_request():
 
 
     try:
-
         try:
+            current_user_id = str(
+                g.current_user.user_id
+            )
 
-            # Raw request values are passed to the ownership
+            request_conversation_id = data.get(
+                "conversation_id"
+            )
+            request_session_id = data.get(
+                "session_id"
+            )
 
-            # service. This prevents numbers, lists, and objects
+            # --------------------------------------------------------------
+            # Explicit conversation scope only
+            # --------------------------------------------------------------
+            if new_conversation:
+                resolved_conversation_id = None
+                resolved_session_id = None
+            else:
+                # Pass exactly what the frontend supplied. When both are
+                # omitted, the ownership service creates a fresh scope.
+                # When either is supplied, it validates the supplied scope
+                # without filling values from browser/session state.
+                resolved_conversation_id = (
+                    request_conversation_id
+                )
+                resolved_session_id = (
+                    request_session_id
+                )
 
-            # from becoming identifiers through str().
-
+            # --------------------------------------------------------------
+            # Always validate ownership before using the scope
+            # --------------------------------------------------------------
             scope = resolve_conversation_scope(
-
-                user_id=g.current_user.user_id,
-
-                conversation_id=data.get(
-
-                    "conversation_id"
-
+                user_id=current_user_id,
+                conversation_id=(
+                    resolved_conversation_id
                 ),
-
-                session_id=data.get(
-
-                    "session_id"
-
+                session_id=(
+                    resolved_session_id
                 ),
-
             )
 
         except ConversationScopeError as exc:
-
             return jsonify(
-
                 {
-
                     "error": exc.public_message
-
                 }
-
             ), exc.status_code
 
-
-
         result = _run_for_current_user(
-
             message=message,
-
             session_id=scope.session_id,
-
             conversation_id=(
-
                 scope.conversation_id
-
             ),
-
             uploaded_file=uploaded_file,
-
         )
 
 

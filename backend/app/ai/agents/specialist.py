@@ -47,24 +47,54 @@ Rules:
 - Call at most ONE tool in a reasoning turn and wait for its result.
 - Never invent identifiers, facts, amounts, dates, quantities or tool results.
 - Never claim a mutation completed unless its tool result confirms success.
-- If a required entity/reference cannot be resolved safely, ask for
-  clarification rather than guessing.
+CENTRAL CLARIFICATION RULE:
+- Do NOT ask the user directly for a missing argument of a mutation tool
+  when the intended mutation tool can already be identified.
+- Instead, call the intended mutation tool with every argument that is known.
+- Leave optional unknown string arguments empty, or omit them when permitted
+  by the tool schema.
+- A deterministic clarification gate runs before authorization and execution.
+  It will detect supported missing information and ask the user.
+- Never invent a missing value just to make the tool call.
+- If an existing entity or stable reference must first be resolved, use an
+  appropriate read/search/list tool instead of inventing an identifier.
 - Do not expose private chain-of-thought; return only useful user-facing text.
 """.strip()
 
 
 _DOMAIN_RULES: Dict[str, str] = {
     "food": """
-Food rules:
-- Grocery list is shopping intent; inventory is stocked household food.
-- add_grocery_item creates a new shopping-list item; list/get read existing
-  items; update/delete/mark_purchased operate on an existing item.
-- add_inventory_item creates stocked inventory; list/get/update/delete operate
-  on existing inventory.
-- Never create a duplicate merely because an existing item is referenced.
-- For an update/delete/purchase, preserve and use the stable server-derived id;
-  never invent one.
-""".strip(),
+    Food rules:
+    - Grocery list means items the household intends to buy later.
+    - Inventory means food the household already owns or has acquired.
+
+    Purchase semantics:
+    - A completed-purchase statement such as "I bought 2 kg apples",
+    "I purchased milk", or "I bought bread" means the item has been
+    acquired and belongs in household inventory.
+    - For those statements use `add_inventory_item`.
+    - NEVER interpret a bare "I bought ..." or "I purchased ..." statement
+    as a request to add an item to the grocery list.
+    - `mark_purchased` is only for an EXISTING grocery-list row when the
+    user explicitly asks to mark that grocery-list item as purchased,
+    for example "mark apples purchased" or
+    "mark that grocery item as purchased".
+    - Do not use `mark_purchased` as a substitute for adding newly
+    acquired stock to inventory.
+
+    Grocery list:
+    - `add_grocery_item` creates a new shopping-list item.
+    - Use it when the user intends to buy something later, for example
+    "add milk to my grocery list" or "I need to buy milk".
+
+    Inventory:
+    - `add_inventory_item` creates stocked household inventory.
+    - list/get/update/delete inventory tools operate on existing stock.
+
+    - Never create a duplicate merely because an existing item is referenced.
+    - For an update/delete/purchase-status operation, preserve and use the
+    stable server-derived id; never invent one.
+    """.strip(), 
     "finance": """
 Finance rules:
 - Expense CRUD is actual spending; Budget CRUD is spending limits;
@@ -72,6 +102,11 @@ Finance rules:
 - Already-paid money is an expense. Create a budget only when explicitly asked.
 - Convert INR to integer minor units when the amount is explicit
   (for example Rs 500 -> 50000). Never invent a financial amount.
+- For log_expense, populate description with the expense subject/purpose
+  (for example "grocery", "petrol", or "AC repair"), excluding the amount
+  and relative-date wording when possible.
+- For log_expense, populate occurred_at from CURRENT DATE/TIME when the
+  request represents spending now/today. Preserve an explicit supplied date.
 """.strip(),
     "tasks": """
 Task rules:
@@ -195,6 +230,58 @@ def _build_specialist_system_prompt(
     return "\n\n".join(parts)
 
 
+def _normalize_specialist_tool_args(
+    state: AgentState,
+    action: Dict,
+    tool_name: str,
+    args: Dict,
+) -> Dict:
+    """Apply deterministic server-side defaults before consistency checks.
+
+    Finance duplicate identity depends on description + time. The tool itself
+    historically allows both fields to be omitted, so normalize those optional
+    values before the call reaches duplicate checking and execution.
+    """
+
+    normalized = dict(args or {})
+
+    if tool_name != "log_expense":
+        return normalized
+
+    description = str(
+        normalized.get("description")
+        or ""
+    ).strip()
+
+    if not description:
+        # Stable, amount-independent fallback. The specialist prompt should
+        # normally provide the semantic expense subject; category is the safe
+        # fallback when it does not.
+        description = str(
+            normalized.get("category")
+            or ""
+        ).strip()
+
+        if description:
+            normalized["description"] = description
+
+    occurred_at = str(
+        normalized.get("occurred_at")
+        or ""
+    ).strip()
+
+    if not occurred_at:
+        current_datetime = str(
+            state.get("current_datetime")
+            or ""
+        ).strip()
+
+        if current_datetime:
+            normalized["occurred_at"] = current_datetime
+
+    return normalized
+
+
 def specialist_node(state: AgentState) -> dict:
     actions = state.get("planned_actions", [])
     index = state.get("current_action_index", 0)
@@ -285,11 +372,18 @@ def specialist_node(state: AgentState) -> dict:
 
     call = tool_calls[0]
 
+    normalized_args = _normalize_specialist_tool_args(
+        state,
+        action,
+        str(call["name"]),
+        dict(call.get("args", {}) or {}),
+    )
+
     # Authorization must happen before this tool-call message enters history.
     return {
         "pending_tool_call": {
             "name": call["name"],
-            "args": call.get("args", {}),
+            "args": normalized_args,
             "id": call.get("id", ""),
         },
         "pending_ai_message": ai_message,
