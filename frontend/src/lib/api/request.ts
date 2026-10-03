@@ -8,7 +8,11 @@ export type RequestContext = {
 };
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly data?: unknown // Stores the full backend response payload
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -27,8 +31,12 @@ export async function request<T>(path: string, init: RequestInit = {}, context: 
 
   const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { error?: string; message?: string } | null;
-    throw new ApiError(response.status, payload?.error ?? payload?.message ?? `Request failed with status ${response.status}`);
+    const payload = await response.json().catch(() => null) as { error?: string; message?: string; [key: string]: unknown } | null;
+    throw new ApiError(
+      response.status,
+      payload?.message ?? payload?.error ?? `Request failed with status ${response.status}`,
+      payload // Pass the full payload here
+    );
   }
   return response.json() as Promise<T>;
 }
