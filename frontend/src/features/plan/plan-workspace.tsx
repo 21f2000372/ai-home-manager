@@ -27,6 +27,9 @@ import {
 import type {
   CalendarEvent,
   CalendarScheduleConflict,
+  CalendarConflict,
+  TaskConflict,
+  EventAttendee,
   CreateCalendarEventInput,
 } from '@/features/calendar-schedule/calendar-types';
 import {
@@ -90,7 +93,6 @@ export function PlanWorkspace() {
   const [eventForm, setEventForm] = useState<CreateCalendarEventInput>(emptyEvent);
   const [clientError, setClientError] = useState<string | null>(null);
 
-  // Active conflict state for the 409 modal
   const [pendingConflict, setPendingConflict] = useState<ActiveConflictState | null>(null);
 
   const tasksQuery = useQuery({
@@ -421,7 +423,7 @@ export function PlanWorkspace() {
         />
       )}
 
-      {/* Event Composer with Member Attendees */}
+      {/* Event Composer */}
       {composer === 'event' && (
         <EventComposer
           form={eventForm}
@@ -433,7 +435,7 @@ export function PlanWorkspace() {
         />
       )}
 
-      {/* Conflict Negotiation Modal */}
+      {/* Conflict Modal */}
       {pendingConflict && (
         <ConflictModal
           conflicts={pendingConflict.conflicts}
@@ -570,10 +572,6 @@ export function PlanWorkspace() {
   );
 }
 
-// -----------------------------------------------------------------------------
-// Subcomponents & Composers
-// -----------------------------------------------------------------------------
-
 function RangeButton({
   active,
   children,
@@ -613,7 +611,7 @@ function TaskComposer({
   pending: boolean;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  setForm: (form: CreateTaskInput) => void;
+  setForm: React.Dispatch<React.SetStateAction<CreateTaskInput>>;
 }) {
   return (
     <Card className="p-5 sm:p-6">
@@ -627,7 +625,7 @@ function TaskComposer({
             placeholder="e.g. Clean kitchen counters"
             value={form.title}
             onChange={(event) =>
-              setForm({ ...form, title: event.target.value })
+              setForm((prev) => ({ ...prev, title: event.target.value }))
             }
           />
         </label>
@@ -637,7 +635,7 @@ function TaskComposer({
             className="task-input"
             value={form.assigned_to ?? ''}
             onChange={(event) =>
-              setForm({ ...form, assigned_to: event.target.value || undefined })
+              setForm((prev) => ({ ...prev, assigned_to: event.target.value || undefined }))
             }
           >
             <option value="">Unassigned</option>
@@ -655,7 +653,7 @@ function TaskComposer({
             type="datetime-local"
             value={form.due_at ?? ''}
             onChange={(event) =>
-              setForm({ ...form, due_at: event.target.value })
+              setForm((prev) => ({ ...prev, due_at: event.target.value }))
             }
           />
         </label>
@@ -666,10 +664,10 @@ function TaskComposer({
               className="task-input appearance-none"
               value={form.priority}
               onChange={(event) =>
-                setForm({
-                  ...form,
+                setForm((prev) => ({
+                  ...prev,
                   priority: event.target.value as CreateTaskInput['priority'],
-                })
+                }))
               }
             >
               <option value="Low">Low</option>
@@ -690,7 +688,7 @@ function TaskComposer({
             className="task-input min-h-20 resize-y py-3"
             value={form.description ?? ''}
             onChange={(event) =>
-              setForm({ ...form, description: event.target.value })
+              setForm((prev) => ({ ...prev, description: event.target.value }))
             }
           />
         </label>
@@ -776,7 +774,6 @@ function EventComposer({
           />
         </label>
 
-        {/* Member Selector for Meeting Attendees */}
         <div className="md:col-span-2">
           <span className="mb-1.5 block text-sm font-semibold">
             Invite household attendees (optional)
@@ -817,10 +814,6 @@ function EventComposer({
   );
 }
 
-// -----------------------------------------------------------------------------
-// Unified Conflict Modal
-// -----------------------------------------------------------------------------
-
 function ConflictModal({
   conflicts,
   isPending,
@@ -832,8 +825,8 @@ function ConflictModal({
   onCancel: () => void;
   onForce: () => void;
 }) {
-  const calConflicts = conflicts.calendar_conflicts ?? [];
-  const taskConflicts = conflicts.task_conflicts ?? [];
+  const calConflicts: CalendarConflict[] = (conflicts.calendar_conflicts ?? []) as CalendarConflict[];
+  const taskConflicts: TaskConflict[] = (conflicts.task_conflicts ?? []) as TaskConflict[];
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 backdrop-blur-sm">
@@ -853,10 +846,9 @@ function ConflictModal({
         </div>
 
         <div className="mt-4 max-h-60 space-y-3 overflow-y-auto rounded-xl bg-[#ECEAE4]/60 p-3 text-xs">
-          {/* Calendar-to-Calendar / Calendar-to-Task overlaps */}
-          {calConflicts.map((c) => (
+          {calConflicts.map((c: CalendarConflict, idx: number) => (
             <div
-              key={c.event_id}
+              key={c.event_id || idx}
               className="flex items-start justify-between gap-2 rounded-lg bg-[var(--surface)] p-3 shadow-sm border border-[var(--line)]"
             >
               <div>
@@ -875,10 +867,9 @@ function ConflictModal({
             </div>
           ))}
 
-          {/* Task-to-Task / Task-to-Calendar overlaps */}
-          {taskConflicts.map((t) => (
+          {taskConflicts.map((t: TaskConflict, idx: number) => (
             <div
-              key={t.task_id}
+              key={t.task_id || idx}
               className="flex items-start justify-between gap-2 rounded-lg bg-[var(--surface)] p-3 shadow-sm border border-[var(--line)]"
             >
               <div>
@@ -923,10 +914,6 @@ function ConflictModal({
     </div>
   );
 }
-
-// -----------------------------------------------------------------------------
-// Timeline and Card Views
-// -----------------------------------------------------------------------------
 
 function DayColumn({
   day,
@@ -989,6 +976,8 @@ function DayColumn({
 }
 
 function EventCard({ event }: { event: CalendarEvent }) {
+  const attendees: EventAttendee[] = event.attendees ?? [];
+
   return (
     <article className="rounded-xl border border-[#5E9278]/25 bg-[#E4F0E8] p-3 text-[#284837]">
       <div className="flex gap-2">
@@ -996,9 +985,9 @@ function EventCard({ event }: { event: CalendarEvent }) {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold leading-5">{event.title}</p>
           <p className="mt-1 text-xs text-[#3D5F4E]">{timeRange(event)}</p>
-          {event.attendees && event.attendees.length > 0 && (
+          {attendees.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {event.attendees.map((a) => (
+              {attendees.map((a: EventAttendee) => (
                 <span
                   key={a.user_id}
                   className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-[#284837]"
@@ -1157,10 +1146,6 @@ function LoadingPlan() {
     </div>
   );
 }
-
-// -----------------------------------------------------------------------------
-// Date Formatters & Helpers
-// -----------------------------------------------------------------------------
 
 type Day = { date: Date; key: string; weekday: string; label: string };
 
