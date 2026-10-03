@@ -12,11 +12,16 @@ from app.models.tasks import CalendarEvent, Task
 
 
 def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize datetimes for comparison with the current SQLite storage.
+
+    Although the model columns declare timezone=True, SQLite returns the
+    persisted values as naive wall-clock datetimes in this app. Keep the
+    wall-clock value and remove tzinfo so incoming aware values compare
+    consistently with stored rows.
+    """
     if dt is None:
         return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    return dt.replace(tzinfo=None)
 
 
 class TaskService:

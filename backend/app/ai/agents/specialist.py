@@ -102,6 +102,11 @@ Finance rules:
 - Already-paid money is an expense. Create a budget only when explicitly asked.
 - Convert INR to integer minor units when the amount is explicit
   (for example Rs 500 -> 50000). Never invent a financial amount.
+- For log_expense, populate description with the expense subject/purpose
+  (for example "grocery", "petrol", or "AC repair"), excluding the amount
+  and relative-date wording when possible.
+- For log_expense, populate occurred_at from CURRENT DATE/TIME when the
+  request represents spending now/today. Preserve an explicit supplied date.
 """.strip(),
     "tasks": """
 Task rules:
@@ -225,6 +230,58 @@ def _build_specialist_system_prompt(
     return "\n\n".join(parts)
 
 
+def _normalize_specialist_tool_args(
+    state: AgentState,
+    action: Dict,
+    tool_name: str,
+    args: Dict,
+) -> Dict:
+    """Apply deterministic server-side defaults before consistency checks.
+
+    Finance duplicate identity depends on description + time. The tool itself
+    historically allows both fields to be omitted, so normalize those optional
+    values before the call reaches duplicate checking and execution.
+    """
+
+    normalized = dict(args or {})
+
+    if tool_name != "log_expense":
+        return normalized
+
+    description = str(
+        normalized.get("description")
+        or ""
+    ).strip()
+
+    if not description:
+        # Stable, amount-independent fallback. The specialist prompt should
+        # normally provide the semantic expense subject; category is the safe
+        # fallback when it does not.
+        description = str(
+            normalized.get("category")
+            or ""
+        ).strip()
+
+        if description:
+            normalized["description"] = description
+
+    occurred_at = str(
+        normalized.get("occurred_at")
+        or ""
+    ).strip()
+
+    if not occurred_at:
+        current_datetime = str(
+            state.get("current_datetime")
+            or ""
+        ).strip()
+
+        if current_datetime:
+            normalized["occurred_at"] = current_datetime
+
+    return normalized
+
+
 def specialist_node(state: AgentState) -> dict:
     actions = state.get("planned_actions", [])
     index = state.get("current_action_index", 0)
@@ -315,11 +372,18 @@ def specialist_node(state: AgentState) -> dict:
 
     call = tool_calls[0]
 
+    normalized_args = _normalize_specialist_tool_args(
+        state,
+        action,
+        str(call["name"]),
+        dict(call.get("args", {}) or {}),
+    )
+
     # Authorization must happen before this tool-call message enters history.
     return {
         "pending_tool_call": {
             "name": call["name"],
-            "args": call.get("args", {}),
+            "args": normalized_args,
             "id": call.get("id", ""),
         },
         "pending_ai_message": ai_message,

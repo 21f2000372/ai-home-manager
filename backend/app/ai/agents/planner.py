@@ -29,6 +29,178 @@ def _invoke_role_telemetry(runnable, messages, *, node: str, role: str):
     return invoke_with_telemetry(runnable, messages, **kwargs)
 
 
+
+
+_REPAIR_EXPENSE_WORD_RE = re.compile(
+    r"\b(?:repair|repairs|repaired|service|servicing|maintenance)\b",
+    re.IGNORECASE,
+)
+
+_REPAIR_EXPENSE_FINANCE_VERB_RE = re.compile(
+    r"\b(?:log|record|spent|spend|paid|expense)\b",
+    re.IGNORECASE,
+)
+
+_REPAIR_EXPENSE_MONEY_RE = re.compile(
+    r"(?:"
+    r"₹\s*\d+(?:\.\d{1,2})?"
+    r"|\b(?:rs\.?|inr)\s*\d+(?:\.\d{1,2})?\b"
+    r"|\b\d+(?:\.\d{1,2})?\s*(?:rs\.?|inr)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+_REPAIR_EXPLICIT_FINANCE_RE = re.compile(
+    r"\b(?:expense|expenses|spent|spend|paid|payment|payments|"
+    r"cost|costs|price|charged|charge)\b",
+    re.IGNORECASE,
+)
+
+
+_CALENDAR_EVENT_WORD_RE = re.compile(
+    r"\b(?:appointment|appointments|meeting|meetings|party|parties)\b",
+    re.IGNORECASE,
+)
+
+_EXPLICIT_TASK_WORD_RE = re.compile(
+    r"\b(?:task|tasks|to[- ]?do|reminder|reminders|remind)\b",
+    re.IGNORECASE,
+)
+
+
+def _apply_calendar_event_routing(
+    actions: List[dict],
+) -> List[dict]:
+    """Prefer calendar-event tools for event nouns inside the tasks domain.
+
+    Appointment, meeting and party are treated as calendar events by default.
+    Explicit task/to-do/reminder wording wins, so requests such as
+    "remind me about my appointment" remain task/reminder actions.
+    """
+
+    routed = []
+
+    for action in actions:
+        updated = dict(action)
+
+        if (
+            str(updated.get("domain") or "").strip().casefold()
+            != "tasks"
+        ):
+            routed.append(updated)
+            continue
+
+        intent = str(
+            updated.get("intent") or ""
+        ).strip()
+        description = str(
+            updated.get("description") or ""
+        ).strip()
+
+        context = "{} {}".format(
+            intent,
+            description,
+        )
+
+        if (
+            _CALENDAR_EVENT_WORD_RE.search(context)
+            and not _EXPLICIT_TASK_WORD_RE.search(context)
+            and "calendar" not in context.casefold()
+        ):
+            updated["intent"] = (
+                "calendar event {}".format(intent).strip()
+            )
+
+        routed.append(updated)
+
+    return routed
+
+
+def _is_finance_first_repair_expense(message: str) -> bool:
+    """Return True for explicit paid/logged repair expenses.
+
+    Supported money forms include both prefix and suffix currency notation,
+    for example ``Rs 2500``, ``2500 Rs``, ``INR 2500``, ``2500 INR`` and
+    ``₹2500``.  A bare repair/service request remains Maintenance.
+    """
+
+    text = " ".join(str(message or "").split())
+    if not text:
+        return False
+
+    return bool(
+        _REPAIR_EXPENSE_WORD_RE.search(text)
+        and _REPAIR_EXPENSE_FINANCE_VERB_RE.search(text)
+        and _REPAIR_EXPENSE_MONEY_RE.search(text)
+    )
+
+
+def _is_bare_repair_request(message: str) -> bool:
+    """Return True for repair/service intent with no explicit finance facts.
+
+    This is evaluated only from the CURRENT user message. It deliberately
+    ignores planner output and retrieved context so a prior amount cannot leak
+    into a fresh repair request.
+    """
+
+    text = " ".join(str(message or "").split())
+    if not text:
+        return False
+
+    return bool(
+        _REPAIR_EXPENSE_WORD_RE.search(text)
+        and not _REPAIR_EXPENSE_MONEY_RE.search(text)
+        and not _REPAIR_EXPLICIT_FINANCE_RE.search(text)
+    )
+
+
+def _apply_finance_first_repair_routing(
+    state: AgentState,
+    actions: List[dict],
+) -> List[dict]:
+    """Apply deterministic repair routing from the CURRENT user message.
+
+    - Explicit currency amount + repair/service -> Finance first.
+    - Bare repair/service with no money/payment facts -> Maintenance.
+
+    Cross-domain continuations and pending edits are intentionally excluded so
+    an accepted Finance -> Maintenance follow-up cannot be routed back to
+    Finance again.
+    """
+
+    if state.get("suggestion_context") or state.get("pending_edit_context"):
+        return actions
+
+    if len(actions) != 1:
+        return actions
+
+    message = str(state.get("message") or "").strip()
+
+    if _is_finance_first_repair_expense(message):
+        updated = dict(actions[0])
+        updated["domain"] = "finance"
+        return [updated]
+
+    # Defensive reverse guard: if the LLM invents an amount or copies a prior
+    # Finance repair example, trust the current user message instead.
+    if (
+        _is_bare_repair_request(message)
+        and str(actions[0].get("domain") or "").strip().casefold() == "finance"
+    ):
+        updated = dict(actions[0])
+        updated["domain"] = "maintenance"
+        updated["intent"] = (
+            "log repair"
+            if re.search(r"\b(?:log|record)\b", message, re.IGNORECASE)
+            else "maintenance request"
+        )
+        updated["description"] = message
+        return [updated]
+
+    return actions
+
+
 class PlannedActionModel(BaseModel):
     domain: Literal[
         "finance",
@@ -75,6 +247,10 @@ Rules:
 - If a reference cannot be resolved safely, use general and describe the
   ambiguity rather than guessing.
 - "remind me/person" is tasks; preserve relative times.
+- Appointment, meeting, and party are calendar-event concepts by default and
+  should use calendar-event tooling when scheduled/created/updated/deleted.
+- Explicit task/to-do/reminder wording takes precedence; for example, a task to
+  prepare for a party or a reminder about an appointment remains a task.
 - "add X to inventory" is stocked inventory; "add X to grocery list" is a
   shopping-list action. Do not interchange them.
 - A statement such as "I bought 2 kg apples" describes acquired household stock
@@ -85,15 +261,15 @@ Rules:
   apples", is finance. The cross-domain layer can later offer the inventory
   follow-up; do not invent that second action here.
 - Already-paid spending is finance. Create a budget only when explicitly asked.
-- Repair/service intent takes precedence over incidental price information:
-  a request whose primary action is to log or record an appliance repair/service
-  is maintenance even when it includes provider, date, or cost. Example:
-  "Log today's geyser repair for Rs 2500 by CoolCare" is ONE maintenance action.
-  The deterministic cross-domain layer may later offer to log the repair cost
-  as a finance expense; do not convert the repair itself into an expense here.
-- Spending-centered repair language remains finance. Example:
-  "I spent Rs 2500 on geyser repair today" or an explicit request to
-  "log the repair expense" is finance.
+- A repair/service request is Finance first only when the CURRENT USER REQUEST
+  itself explicitly contains a monetary amount with a currency marker, or
+  explicitly states an expense/payment/spending intent.
+- Never infer, copy, or carry an amount or currency from examples, retrieved
+  context, or an earlier request into the current request.
+- A repair/service request with no explicit monetary/payment facts belongs to
+  Maintenance. Do not invent a Finance action for it.
+- Do not add a second explicit Maintenance action for the same paid-repair
+  request; deterministic cross-domain logic may offer Maintenance afterward.
 - Requests to search for, find, list, read, retrieve, view,
   download, inspect, or get a previously uploaded document
   MUST use the documents domain.
@@ -122,96 +298,6 @@ Pending-action edit:
 - Do not execute anything. If the edit is ambiguous, return a general action
   requesting clarification.
 """.strip()
-
-
-_REPAIR_OR_SERVICE_RE = re.compile(
-    r"\b(?:repair|repairs|repaired|repairing|service|serviced|servicing)\b",
-    flags=re.IGNORECASE,
-)
-
-_REPAIR_RECORD_COMMAND_RE = re.compile(
-    r"\b(?:log|record|add)\b.{0,90}\b(?:repair|repairs|service)\b",
-    flags=re.IGNORECASE,
-)
-
-_PASSIVE_REPAIR_RECORD_RE = re.compile(
-    r"\b(?:was|were|has been|have been)?\s*(?:repaired|serviced)\b",
-    flags=re.IGNORECASE,
-)
-
-_EXPLICIT_FINANCE_REQUEST_RE = re.compile(
-    r"\b(?:log|record|add)\b.{0,60}\b(?:expense|payment)\b"
-    r"|\b(?:expense|payment)\b.{0,60}\b(?:log|record|add)\b",
-    flags=re.IGNORECASE,
-)
-
-_SPENDING_CENTERED_RE = re.compile(
-    r"^\s*(?:i|we)\s+(?:spent|paid|spend|pay)\b"
-    r"|\b(?:repair|service)\s+bill\b"
-    r"|\bbill\s+for\s+(?:the\s+)?(?:repair|service)\b",
-    flags=re.IGNORECASE,
-)
-
-
-def _apply_repair_domain_guard(
-    message: str,
-    actions: List[dict],
-) -> List[dict]:
-    """Correct one narrow planner ambiguity deterministically.
-
-    A repair/service record remains Maintenance when price/provider metadata is
-    incidental. Explicit expense/payment or spending-centered requests remain
-    Finance. Multi-action plans are never rewritten here.
-    """
-
-    if len(actions) != 1:
-        return actions
-
-    raw_message = str(message or "").strip()
-    if not raw_message:
-        return actions
-
-    if _REPAIR_OR_SERVICE_RE.search(raw_message) is None:
-        return actions
-
-    current = actions[0]
-    if not isinstance(current, dict):
-        return actions
-
-    # Only correct the observed misclassification. Never rewrite another
-    # non-finance domain or an already-correct Maintenance action.
-    if str(current.get("domain") or "").strip() != "finance":
-        return actions
-
-    explicit_finance_request = (
-        _EXPLICIT_FINANCE_REQUEST_RE.search(raw_message)
-        is not None
-    )
-
-    spending_centered = (
-        _SPENDING_CENTERED_RE.search(raw_message)
-        is not None
-    )
-
-    repair_record_request = (
-        _REPAIR_RECORD_COMMAND_RE.search(raw_message)
-        is not None
-        or _PASSIVE_REPAIR_RECORD_RE.search(raw_message)
-        is not None
-    )
-
-    if (
-        not repair_record_request
-        or explicit_finance_request
-        or spending_centered
-    ):
-        return actions
-
-    corrected = dict(current)
-    corrected["domain"] = "maintenance"
-    corrected["intent"] = "log repair"
-
-    return [corrected]
 
 
 def _safe_json(value) -> str:
@@ -301,14 +387,14 @@ def planner_node(state: AgentState) -> dict:
         for action in result.actions
     ]
 
-    if (
-        not state.get("pending_edit_context")
-        and not state.get("suggestion_context")
-    ):
-        actions = _apply_repair_domain_guard(
-            str(state.get("message") or ""),
-            actions,
-        )
+    actions = _apply_finance_first_repair_routing(
+        state,
+        actions,
+    )
+
+    actions = _apply_calendar_event_routing(
+        actions,
+    )
 
     return {
         "planned_actions": actions,

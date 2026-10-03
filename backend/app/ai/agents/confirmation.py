@@ -91,6 +91,10 @@ from app.services.document_execution import (
     find_resumable_document_execution,
 
 )
+from app.services.datetime_resolver import (
+    resolve_relative_datetime,
+)
+
 
 from app.services.suggestion_workflow import (
 
@@ -751,6 +755,7 @@ def _edit_request_kind(message: str) -> Optional[str]:
 def _is_direct_suggestion_detail_reply(
     message: str,
     suggestion: Dict[str, Any],
+    current_datetime: Optional[str] = None,
 ) -> bool:
     """
     Conservatively recognize a reply that supplies concrete details for
@@ -818,6 +823,33 @@ def _is_direct_suggestion_detail_reply(
             return False
 
         return True
+
+    if (
+        target_tool == "create_task"
+        and "due_at" in missing_fields
+    ):
+        # Preserve exact yes/no semantics: a bare "yes" is still approval to
+        # enter detail collection, while a reply carrying a real date/time can
+        # be consumed immediately as the pending suggestion's detail turn.
+        temporal_text = re.sub(
+            r"^\s*(?:yes|yeah|yep|sure|okay|ok)\b[\s,:-]*",
+            "",
+            str(message or ""),
+            flags=re.IGNORECASE,
+        ).strip()
+
+        if not temporal_text:
+            return False
+
+        try:
+            resolved = resolve_relative_datetime(
+                temporal_text,
+                current_datetime,
+            )
+        except Exception:
+            resolved = None
+
+        return bool(resolved)
 
     return False
 
@@ -2791,6 +2823,43 @@ def _resume_suggestion_confirmation(
 
     if decision == "yes" and stage == "offered":
 
+        # Some deterministic suggestions already carry every trusted fact
+        # needed for an open-ended target-domain replan. In that case the
+        # user's "yes" is sufficient: close the suggestion and replan now
+        # instead of asking a redundant detail question.
+        if continuation_mode == "replan" and not missing_fields:
+            try:
+                complete_replan_suggestion(state, proposal_id)
+            except SuggestionWorkflowError as exc:
+                return {
+                    "confirmation_resolution": "error",
+                    "confirmation_kind": "suggestion",
+                    "awaiting_confirmation": False,
+                    "finished": True,
+                    "response": str(exc),
+                }
+
+            return {
+                "confirmation_resolution": "suggestion_replan",
+                "confirmation_kind": "suggestion",
+                "workflow_proposal_id": None,
+                "editing_workflow_proposal_id": None,
+                "pending_edit_context": None,
+                "force_action_review": False,
+                "planned_actions": [],
+                "current_action_index": 0,
+                "suggestion_context": {
+                    "description": suggestion.get("description"),
+                    "source_description": suggestion.get("source_description"),
+                    "context_text": suggestion.get("context_text"),
+                    "target_domain": suggestion.get("target_domain"),
+                },
+                "active_suggestion": None,
+                "awaiting_confirmation": False,
+                "finished": False,
+                "response": "",
+            }
+
         if missing_fields or continuation_mode == "replan":
 
             try:
@@ -2910,6 +2979,20 @@ def _resume_suggestion_confirmation(
             "origin": "cross_domain_suggestion",
 
         }
+
+        chain_context = suggestion.get(
+            "chain_context"
+        )
+
+        if isinstance(
+            chain_context,
+            dict,
+        ):
+            action[
+                "suggestion_chain_context"
+            ] = dict(
+                chain_context
+            )
 
 
 
@@ -3688,7 +3771,7 @@ def _build_appliance_clarification_resume(
     missing values such as quantities or dates can be incorporated normally.
     Appliance identity replies are already interpreted deterministically by
     clarification.py and therefore should not depend on an LLM regenerating
-    the original repair/task call from a reply such as "yes" or "2".
+    the original maintenance/task call from a reply such as "yes" or "2".
     """
 
     appliance_resolution = clarification_context.get(
@@ -3703,6 +3786,7 @@ def _build_appliance_clarification_resume(
 
     if tool_name not in {
         "log_repair",
+        "report_issue",
         "create_task",
     }:
         return None
@@ -4405,6 +4489,9 @@ def resume_confirmation_node(state: AgentState) -> Dict[str, Any]:
                 and _is_direct_suggestion_detail_reply(
                     message,
                     suggestion,
+                    routed_state.get(
+                        "current_datetime"
+                    ),
                 )
             )
 

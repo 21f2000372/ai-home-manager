@@ -449,7 +449,6 @@ DUPLICATE_CHECKERS = {
     
     "create_calendar_event": _check_calendar_overlap,
     "create_task": _check_task_overlap,
-    "log_repair": _check_repair_overlap,
 }
 
 def check_consistency(
@@ -461,14 +460,19 @@ def check_consistency(
     """
     Compatibility adapter around the shared consistency service.
 
-    Grocery and inventory use the new service. Other domains remain
-    on their existing checkers until they are migrated.
+    Grocery, inventory, finance, task creation, and Maintenance create
+    operations use the shared service. Remaining legacy operations stay on
+    their existing checkers until they are migrated.
     """
 
     if operation in {
         "add_grocery_item",
         "add_inventory_item",
         "log_expense",
+        "create_task",
+        "add_appliance",
+        "report_issue",
+        "log_repair",
     }:
         shared_result = check_shared_consistency(
             domain=domain,
