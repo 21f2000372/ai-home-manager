@@ -1,0 +1,266 @@
+openapi: 3.0.3
+info:
+  title: Household Documents API
+  version: 1.0.0
+
+paths:
+  /api/documents:
+    get:
+      summary: List documents visible to the current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Approved documents, the user's pending uploads, and visible record links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [documents, pending_uploads, links]
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
+                  pending_uploads:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PendingDocumentUpload"
+                  links:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DocumentLink"
+        "401":
+          description: Missing or invalid bearer token
+
+  /api/documents/{document_id}/view:
+    get:
+      summary: Get a short-lived link to view an approved document
+      description: Requires document visibility permissions. Guest access is denied.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Signed document-view link
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [document_id, reference, filename, mime_type, download_url]
+                properties:
+                  document_id:
+                    type: string
+                    format: uuid
+                  reference:
+                    type: string
+                  filename:
+                    type: string
+                  mime_type:
+                    type: string
+                  download_url:
+                    type: string
+                    format: uri
+        "401":
+          description: Missing or invalid bearer token
+        "403":
+          description: Original document viewing is forbidden
+        "404":
+          description: Document is unavailable or not visible
+        "503":
+          description: Document storage is unavailable or not configured
+
+  /api/documents/pending/{pending_id}/view:
+    get:
+      summary: Get a short-lived link to preview a pending upload
+      description: Only the uploader may preview their pending upload.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pending_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Signed pending-document preview link
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [view_url]
+                properties:
+                  view_url:
+                    type: string
+                    format: uri
+        "401":
+          description: Missing or invalid bearer token
+        "404":
+          description: Pending document is unavailable or belongs to another user
+
+  /api/documents/local-file/{token}:
+    get:
+      summary: Serve a file using a signed, expiring view token
+      description: The signed token is the authorization credential for this request.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document file bytes
+          content:
+            application/pdf: {}
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
+        "403":
+          description: Invalid or expired view token, or access denied
+        "404":
+          description: Document file is unavailable
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Document:
+      type: object
+      required: [document_id, document_type, status, prompt_injection_detected]
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        document_type:
+          type: string
+          enum: [Receipt, Bill, Warranty, Other]
+        classified_document_type:
+          type: string
+          nullable: true
+        domain:
+          type: string
+          nullable: true
+        classification_confidence:
+          type: number
+          format: float
+          nullable: true
+        classification_reason:
+          type: string
+          nullable: true
+        original_filename:
+          type: string
+          nullable: true
+        mime_type:
+          type: string
+          nullable: true
+        extension:
+          type: string
+          nullable: true
+        file_size:
+          type: integer
+          nullable: true
+        extraction_method:
+          type: string
+          nullable: true
+        page_count:
+          type: integer
+          nullable: true
+        prompt_injection_detected:
+          type: boolean
+        status:
+          type: string
+        uploaded_by:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PendingDocumentUpload:
+      type: object
+      required: [pending_id, upload_id, original_filename, status, review_reasons]
+      properties:
+        pending_id:
+          type: string
+          format: uuid
+        upload_id:
+          type: string
+          format: uuid
+        original_filename:
+          type: string
+        mime_type:
+          type: string
+          nullable: true
+        extension:
+          type: string
+          nullable: true
+        file_size:
+          type: integer
+          nullable: true
+        extraction_method:
+          type: string
+          nullable: true
+        page_count:
+          type: integer
+          nullable: true
+        domain:
+          type: string
+          nullable: true
+        classified_document_type:
+          type: string
+          nullable: true
+        classification_confidence:
+          type: number
+          format: float
+          nullable: true
+        classification_reason:
+          type: string
+          nullable: true
+        prompt_injection_detected:
+          type: boolean
+        status:
+          type: string
+        review_reasons:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DocumentLink:
+      type: object
+      required: [link_id, document_id, linked_domain, linked_record_id]
+      properties:
+        link_id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        linked_domain:
+          type: string
+        linked_record_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
