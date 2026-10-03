@@ -536,9 +536,6 @@ def _public_original_document(
     return None
 
 
-
-
-
 def _public_planned_actions(
 
     actions: Any,
