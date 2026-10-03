@@ -206,9 +206,20 @@ function initials(value: string) {
 
 function ageLabel(value: string | null) {
   if (!value) return null;
-  const birth = new Date(`${value}T00:00:00`);
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+
+  const birthYear = Number(match[1]);
+  const birthMonth = Number(match[2]) - 1;
+  const birthDay = Number(match[3]);
+
   const today = new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  if (today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())) age -= 1;
+  let age = today.getFullYear() - birthYear;
+  if (
+    today.getMonth() < birthMonth ||
+    (today.getMonth() === birthMonth && today.getDate() < birthDay)
+  ) {
+    age -= 1;
+  }
   return `Age ${age}`;
 }

@@ -8,6 +8,7 @@ import { HouseholdChat } from '@/components/ai/household-chat';
 import { ApiError } from '@/lib/api/request';
 import { createTask, getHouseholdMembers, getTasks, updateTask, updateTaskStatus, type CreateTaskInput, type HouseholdMember, type HouseholdTask } from './task-api';
 import { buildTaskSummary, formatDueDate, getNextTaskStatus, toDateTimeLocalValue } from './task-utils';
+import { localInputToUtcIso } from '@/lib/date-utils';
 
 const taskQueryKey = ['household', 'tasks'] as const;
 
@@ -27,6 +28,7 @@ export function TaskWorkspace() {
   const queryClient = useQueryClient();
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [clientError, setClientError] = useState<string | null>(null);
   const [form, setForm] = useState<CreateTaskInput>({ title: '', description: '', assigned_to: '', due_at: '', priority: 'Normal' });
 
   const tasksQuery = useQuery({ queryKey: taskQueryKey, queryFn: () => getTasks() });
@@ -61,21 +63,27 @@ export function TaskWorkspace() {
 
   const summary = useMemo(() => buildTaskSummary(tasksQuery.data ?? []), [tasksQuery.data]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.title.trim()) return;
+    setClientError(null);
+    if (!form.title.trim()) {
+      setClientError('Please enter a task title.');
+      return;
+    }
 
-    const dueAt = form.due_at ? new Date(form.due_at).toISOString() : undefined;
-    const input = {
+    const dueAt = localInputToUtcIso(form.due_at);
+    const input: CreateTaskInput = {
       ...form,
       title: form.title.trim(),
       description: form.description?.trim() || undefined,
       assigned_to: form.assigned_to?.trim() || undefined,
       due_at: dueAt,
+      force: false,
     };
 
     if (editingTaskId) {
       updateMutation.mutate({ taskId: editingTaskId, input });
+      return;
     } else {
       createMutation.mutate(input);
     }
@@ -114,6 +122,7 @@ export function TaskWorkspace() {
       </div>
 
       {isComposerOpen && <TaskComposer members={membersQuery.data ?? []} form={form} setForm={setForm} isEditing={Boolean(editingTaskId)} isPending={createMutation.isPending || updateMutation.isPending} onSubmit={submit} />}
+      {clientError && <p role="alert" className="rounded-xl border border-[#B96359]/30 bg-[#B96359]/10 px-4 py-3 text-sm text-[#8B3F36]">{clientError}</p>}
       {errorMessage && <p role="alert" className="rounded-xl border border-[#B96359]/30 bg-[#B96359]/10 px-4 py-3 text-sm text-[#8B3F36]">{errorMessage}</p>}
       <HouseholdChat
         title="Create task ideas by chat"
@@ -251,3 +260,4 @@ function Metric({ value, label }: { value: number; label: string }) {
     </div>
   );
 }
+

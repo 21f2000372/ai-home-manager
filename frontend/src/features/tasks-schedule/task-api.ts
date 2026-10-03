@@ -1,7 +1,24 @@
+// src/features/tasks-schedule/task-api.ts
 import { request } from '@/lib/api/request';
-import type { CreateTaskInput, HouseholdMember, HouseholdTask, TaskStatus } from './task-types';
+import type {
+  CreateTaskInput,
+  HouseholdMember,
+  HouseholdTask,
+  ScheduleConflict,
+  TaskCreateResult,
+  TaskPriority,
+  TaskStatus,
+} from './task-types';
 
-export type { CreateTaskInput, HouseholdMember, HouseholdTask, TaskPriority, TaskStatus } from './task-types';
+export type {
+  CreateTaskInput,
+  HouseholdMember,
+  HouseholdTask,
+  ScheduleConflict,
+  TaskCreateResult,
+  TaskPriority,
+  TaskStatus,
+} from './task-types';
 
 function requestContext() {
   return { correlationId: crypto.randomUUID() };
@@ -12,27 +29,10 @@ export type TaskQueryOptions = {
   status?: TaskStatus | 'All';
 };
 
-type TaskConflict = {
-  title: string;
-};
-
-export type TaskConflicts = {
-  has_conflict: boolean;
-  calendar_conflicts: TaskConflict[];
-  task_conflicts: TaskConflict[];
-};
-
-export type TaskMutationResult = {
-  task: HouseholdTask;
-  conflicts: TaskConflicts;
-};
-
 export function getTasks(options: TaskQueryOptions = {}) {
   const params = new URLSearchParams();
-
   if (options.assigned_to) params.set('assigned_to', options.assigned_to);
   if (options.status && options.status !== 'All') params.set('status', options.status);
-
   const query = params.toString();
   return request<HouseholdTask[]>(query ? `/api/tasks?${query}` : '/api/tasks', {}, requestContext());
 }
@@ -42,19 +42,20 @@ export function getHouseholdMembers() {
 }
 
 export function createTask(input: CreateTaskInput) {
-  return request<TaskMutationResult>('/api/tasks', {
+  return request<TaskCreateResult>('/api/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...input,
       assigned_to: input.assigned_to || undefined,
       due_at: input.due_at || undefined,
+      force: Boolean(input.force),
     }),
   }, requestContext());
 }
 
 export function updateTask(taskId: string, input: CreateTaskInput) {
-  return request<TaskMutationResult>(`/api/tasks/${taskId}`, {
+  return request<TaskCreateResult>(`/api/tasks/${taskId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -72,4 +73,3 @@ export function updateTaskStatus(taskId: string, status: TaskStatus) {
     body: JSON.stringify({ status }),
   }, requestContext());
 }
-

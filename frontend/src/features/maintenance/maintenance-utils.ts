@@ -1,22 +1,20 @@
 import type { Appliance, ExpiringWarranty, IssueStatus, MaintenanceIssue, MaintenanceSummary, Repair } from './maintenance-types';
+import { parseServerDate, toDateInputValue } from '@/lib/date-utils';
 
 export type WarrantyTone = 'urgent' | 'watch' | 'ok';
 
-export function toDateInputValue(value: string | null | undefined): string {
-  if (!value) return '';
-  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (match) return match[1];
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString().slice(0, 10);
-}
+export { toDateInputValue };
 
 export function formatWarrantyDate(value: string | null): string {
   if (!value) return 'No warranty date';
-  const normalized = toDateInputValue(value);
-  const date = new Date(`${normalized}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return 'No warranty date';
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  const date = parseServerDate(value);
+  if (!date) return 'No warranty date';
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
 }
 
 export function warrantyTone(daysRemaining: number): WarrantyTone {

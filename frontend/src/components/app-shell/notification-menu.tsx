@@ -10,14 +10,62 @@ import {
 
 const notificationsKey = ['user', 'notifications'] as const;
 
+/**
+ * Safely parses naive UTC ISO strings into the local browser timezone.
+ */
+function parseUtcDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  // Replace space with T if stored as SQLite datetime 'YYYY-MM-DD HH:MM:SS'
+  let normalized = trimmed.replace(' ', 'T');
+
+  // If there is a time component but no timezone offset, append 'Z' so it is treated as UTC
+  if (
+    normalized.includes('T') &&
+    !normalized.endsWith('Z') &&
+    !/[+-]\d{2}(:\d{2})?$/.test(normalized)
+  ) {
+    normalized = `${normalized}Z`;
+  }
+
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseNotificationDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const clean = value.trim();
+  if (!clean) return null;
+
+  // 1. Replace space with 'T' if format is 'YYYY-MM-DD HH:mm:ss'
+  let normalized = clean.replace(' ', 'T');
+
+  // 2. If it contains time but lacks timezone indicator ('Z' or +/-offset),
+  // append 'Z' so JavaScript parses it as UTC.
+  if (
+    normalized.includes('T') &&
+    !normalized.endsWith('Z') &&
+    !/[+-]\d{2}(:\d{2})?$/.test(normalized)
+  ) {
+    normalized = `${normalized}Z`;
+  }
+
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatNotificationTime(isoString: string) {
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return '';
+  const date = parseNotificationDate(isoString);
+  if (!date) return '';
+
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    hour12: true,
   }).format(date);
 }
 
@@ -122,45 +170,52 @@ export function NotificationMenu() {
                 <p className="mt-1 text-xs muted">No notifications for your account.</p>
               </div>
             ) : (
-              notifications.map((n) => (
-                <div
-                  key={n.notification_id}
-                  onClick={() => {
-                    if (!n.read) markReadMutation.mutate(n.notification_id);
-                  }}
-                  className={`group relative flex cursor-pointer items-start justify-between gap-3 rounded-xl border p-3 text-xs transition ${
-                    n.read
-                      ? 'border-transparent bg-[var(--surface-muted)] text-[var(--muted)]'
-                      : 'border-[#5E9278]/30 bg-[#E4F0E8]/50 text-[var(--ink)] shadow-sm'
-                  }`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      {!n.read && <span className="size-1.5 rounded-full bg-[#5E9278]" />}
-                      <p className={`font-semibold ${n.read ? 'text-[var(--ink)]' : 'text-[#284837]'}`}>
-                        {n.title}
+              notifications.map((n) => {
+                const parsedDate = parseUtcDate(n.created_at);
+                const exactTooltip = parsedDate ? parsedDate.toLocaleString() : '';
+
+                return (
+                  <div
+                    key={n.notification_id}
+                    onClick={() => {
+                      if (!n.read) markReadMutation.mutate(n.notification_id);
+                    }}
+                    className={`group relative flex cursor-pointer items-start justify-between gap-3 rounded-xl border p-3 text-xs transition ${
+                      n.read
+                        ? 'border-transparent bg-[var(--surface-muted)] text-[var(--muted)]'
+                        : 'border-[#5E9278]/30 bg-[#E4F0E8]/50 text-[var(--ink)] shadow-sm'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        {!n.read && <span className="size-1.5 rounded-full bg-[#5E9278]" />}
+                        <p className={`font-semibold ${n.read ? 'text-[var(--ink)]' : 'text-[#284837]'}`}>
+                          {n.title}
+                        </p>
+                      </div>
+                      <p className="mt-1 leading-relaxed">{n.message}</p>
+                      <p className="mt-1.5 text-[10px] muted" title={exactTooltip}>
+                        {formatNotificationTime(n.created_at)}
                       </p>
                     </div>
-                    <p className="mt-1 leading-relaxed">{n.message}</p>
-                    <p className="mt-1.5 text-[10px] muted">{formatNotificationTime(n.created_at)}</p>
-                  </div>
 
-                  {!n.read && (
-                    <button
-                      type="button"
-                      title="Mark as read"
-                      aria-label="Mark as read"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        markReadMutation.mutate(n.notification_id);
-                      }}
-                      className="rounded-lg p-1 text-[var(--muted)] hover:bg-white hover:text-[#5E9278]"
-                    >
-                      <Check size={14} />
-                    </button>
-                  )}
-                </div>
-              ))
+                    {!n.read && (
+                      <button
+                        type="button"
+                        title="Mark as read"
+                        aria-label="Mark as read"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          markReadMutation.mutate(n.notification_id);
+                        }}
+                        className="rounded-lg p-1 text-[var(--muted)] hover:bg-white hover:text-[#5E9278]"
+                      >
+                        <Check size={14} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
