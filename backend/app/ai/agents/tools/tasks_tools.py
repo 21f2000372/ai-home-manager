@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from langchain_core.tools import tool
 from sqlalchemy import and_, or_
@@ -27,17 +27,48 @@ def reset_agent_user_id(token):
     _agent_user_id.reset(token)
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+UTC = timezone.utc
+
+
 def _parse_datetime(value: str, field_name: str) -> Optional[datetime]:
+    """Parse an incoming datetime and normalize it to naive UTC for storage.
+
+    Agent/frontend values without an explicit offset are interpreted as IST.
+    Offset-aware values are respected and converted to UTC. The application
+    currently persists SQLite datetimes as naive values, so tzinfo is removed
+    only after conversion to UTC.
+    """
     if not value:
         return None
 
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         raise ValueError(
             f"Invalid {field_name} '{value}'. "
             "Use an ISO datetime such as 2026-09-19T08:00:00."
         )
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=IST)
+
+    return parsed.astimezone(UTC).replace(tzinfo=None)
+
+
+def _utc_to_ist(value: Optional[datetime]) -> Optional[datetime]:
+    """Convert a stored UTC datetime to IST for user-facing output."""
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+
+    return value.astimezone(IST)
 
 
 def _resolve_task_id(session, task_ref: str) -> Optional[str]:
@@ -73,22 +104,24 @@ def _member_names(session, user_ids) -> dict:
 
 
 def _friendly_datetime(value) -> str:
-    """Render a datetime as a short, human-readable string (e.g. 'Oct 4, 9:30 AM')."""
+    """Render a stored UTC datetime as a short IST date/time."""
     if value is None:
         return ""
+
+    display_value = _utc_to_ist(value)
     try:
-        has_time = value.hour or value.minute
+        has_time = display_value.hour or display_value.minute
         if has_time:
-            return value.strftime("%b %-d, %-I:%M %p")
-        return value.strftime("%b %-d")
+            return display_value.strftime("%b %-d, %-I:%M %p")
+        return display_value.strftime("%b %-d")
     except (ValueError, AttributeError):
         # Windows strftime does not support %-d / %-I; fall back gracefully.
         try:
-            if value.hour or value.minute:
-                return value.strftime("%b %d, %I:%M %p").replace(" 0", " ")
-            return value.strftime("%b %d").replace(" 0", " ")
+            if display_value.hour or display_value.minute:
+                return display_value.strftime("%b %d, %I:%M %p").replace(" 0", " ")
+            return display_value.strftime("%b %d").replace(" 0", " ")
         except Exception:
-            return str(value)
+            return str(display_value)
 
 
 def _resolve_assignee(session, assignee: str) -> Optional[str]:
@@ -243,7 +276,7 @@ def create_task(
 
         if parsed_due_at:
             result += " Due: {}.".format(
-                parsed_due_at.isoformat()
+                _utc_to_ist(parsed_due_at).replace(tzinfo=None).isoformat()
             )
 
         if assigned_to_id:
@@ -448,7 +481,11 @@ def get_task(task_id: str) -> str:
             result += f"; description: {task.description}"
 
         if task.due_at:
-            result += f"; due_at: {task.due_at.isoformat()}"
+            result += (
+                "; due_at: {}".format(
+                    _utc_to_ist(task.due_at).replace(tzinfo=None).isoformat()
+                )
+            )
 
 
         if task.assigned_to:
@@ -609,8 +646,8 @@ def create_calendar_event(
 
     try:
         try:
-            parsed_start = datetime.fromisoformat(starts_at)
-            parsed_end = datetime.fromisoformat(ends_at)
+            parsed_start = _parse_datetime(starts_at, "starts_at")
+            parsed_end = _parse_datetime(ends_at, "ends_at")
         except ValueError:
             return (
                 "Invalid calendar datetime. "
@@ -635,8 +672,8 @@ def create_calendar_event(
         return (
             f"Created calendar event '{title}' "
             f"(id={event.event_id}) "
-            f"from {parsed_start.isoformat()} "
-            f"to {parsed_end.isoformat()}."
+            f"from {_utc_to_ist(parsed_start).replace(tzinfo=None).isoformat()} "
+            f"to {_utc_to_ist(parsed_end).replace(tzinfo=None).isoformat()}."
         )
 
     except Exception as exc:
@@ -665,8 +702,8 @@ def list_calendar_events() -> str:
 
         return "\n".join(
             f"- {event.title}: "
-            f"{event.starts_at.isoformat()} to "
-            f"{event.ends_at.isoformat()} "
+            f"{_utc_to_ist(event.starts_at).replace(tzinfo=None).isoformat()} to "
+            f"{_utc_to_ist(event.ends_at).replace(tzinfo=None).isoformat()} "
             f"(id={event.event_id})"
             for event in rows
         )
@@ -688,8 +725,8 @@ def get_calendar_event(event_id: str) -> str:
 
         return (
             f"Calendar event: {event.title}; "
-            f"starts_at: {event.starts_at.isoformat()}; "
-            f"ends_at: {event.ends_at.isoformat()}; "
+            f"starts_at: {_utc_to_ist(event.starts_at).replace(tzinfo=None).isoformat()}; "
+            f"ends_at: {_utc_to_ist(event.ends_at).replace(tzinfo=None).isoformat()}; "
             f"id: {event.event_id}"
         )
 
@@ -723,7 +760,7 @@ def update_calendar_event(
 
         if starts_at is not None:
             try:
-                event.starts_at = datetime.fromisoformat(starts_at)
+                event.starts_at = _parse_datetime(starts_at, "starts_at")
             except ValueError:
                 return "Invalid starts_at. Use an ISO datetime."
 
@@ -731,7 +768,7 @@ def update_calendar_event(
 
         if ends_at is not None:
             try:
-                event.ends_at = datetime.fromisoformat(ends_at)
+                event.ends_at = _parse_datetime(ends_at, "ends_at")
             except ValueError:
                 return "Invalid ends_at. Use an ISO datetime."
 

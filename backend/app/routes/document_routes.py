@@ -56,7 +56,6 @@ def view_document(document_id: str):
             role=g.current_role.value,
             document_reference=document_id,
             user_id=g.current_user.user_id,
-            inline_view=True,
         )
         return jsonify(document), 200
     except DocumentRetrievalError as exc:
