@@ -115,6 +115,16 @@ class Config:
         "ai-home-manager/documents",
     )
 
+    DOCUMENT_STORAGE_PROVIDER: str = os.getenv(
+        "DOCUMENT_STORAGE_PROVIDER",
+        "cloudinary",
+    ).strip().lower()
+
+    LOCAL_DOCUMENT_STORAGE_DIR: str = os.getenv(
+        "LOCAL_DOCUMENT_STORAGE_DIR",
+        str(BASE_DIR / "document_store"),
+    )
+
     # 15 MB
     MAX_UPLOAD_BYTES: int = int(
         os.getenv(

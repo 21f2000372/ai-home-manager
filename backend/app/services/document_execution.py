@@ -43,7 +43,7 @@ from app.services.document_workflow import (
     persist_document_action_review,
 )
 from app.rag.document_index import index_document_best_effort
-from app.storage.cloudinary_storage import upload_file
+from app.storage.document_storage import upload_file
 from app.storage.temp_storage import delete_temp_file
 
 
@@ -982,19 +982,19 @@ def _archive_original(
         deterministic_public_id = "document_{0}".format(
             pending.pending_id
         )
-        cloud_result = upload_file(
+        storage_result = upload_file(
             temp_path,
             public_id=deterministic_public_id,
             overwrite=True,
         )
 
-        if not isinstance(cloud_result, dict):
+        if not isinstance(storage_result, dict):
             raise DocumentExecutionError(
                 "Permanent storage returned an invalid response."
             )
 
         public_id = str(
-            cloud_result.get("public_id") or ""
+            storage_result.get("public_id") or ""
         ).strip()
         if not public_id:
             raise DocumentExecutionError(
@@ -1016,7 +1016,7 @@ def _archive_original(
             mime_type=pending.mime_type,
             extension=pending.extension,
             file_size=(
-                cloud_result.get("bytes")
+                storage_result.get("bytes")
                 or pending.file_size
             ),
             sha256=pending.sha256,
@@ -1037,9 +1037,9 @@ def _archive_original(
         result = {
             "document_id": str(document.document_id),
             "public_id": public_id,
-            "resource_type": cloud_result.get("resource_type"),
-            "format": cloud_result.get("format"),
-            "asset_id": cloud_result.get("asset_id"),
+            "resource_type": storage_result.get("resource_type"),
+            "format": storage_result.get("format"),
+            "asset_id": storage_result.get("asset_id"),
             "replayed": False,
         }
         completed_at = utcnow()

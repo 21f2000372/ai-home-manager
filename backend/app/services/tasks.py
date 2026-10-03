@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.enums import MembershipStatus, Priority, TaskStatus
 from app.models.people import Membership, User
 from app.models.tasks import CalendarEvent, Task
+from app.models.notifications import Notification
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -296,7 +297,7 @@ class TaskService:
         task.priority = priority
 
         if assigned_to_id and assigned_to_id != old_assigned:
-            from app.models.notifications import Notification
+            
             session.add(
                 Notification(
                     user_id=assigned_to_id,
