@@ -85,8 +85,8 @@ class Document(Base):
         nullable=True,
     )
 
-    # Private object-storage key.
-    # For Cloudinary this can hold the Cloudinary public_id.
+    # Private object-storage key. Provider-prefixed keys retain their backend
+    # after DOCUMENT_STORAGE_PROVIDER changes; legacy unprefixed keys are Cloudinary.
     storage_key: Mapped[str] = mapped_column(
         String(512),
         nullable=False,

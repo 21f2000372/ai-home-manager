@@ -27,7 +27,10 @@ from app.rag.vector_store import (
     get_default_store,
     roles_visible_to,
 )
-from app.storage.cloudinary_storage import generate_download_url
+from app.storage.cloudinary_storage import (
+    CloudinaryConfigurationError,
+)
+from app.storage.document_storage import document_view_url
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,10 @@ _DOCUMENT_FILENAME_RE = re.compile(
 
 class DocumentRetrievalError(RuntimeError):
     """Retrieval error containing a client-safe message."""
+
+    def __init__(self, message: str, status_code: int = 404):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -664,10 +671,13 @@ def get_original_document(
     document_reference: str,
     saved_at: Optional[str] = None,
     user_id: Optional[str] = None,
+    inline_view: bool = False,
 ) -> Dict[str, Any]:
-    """Authorize one household document and return its signed download URL.
+    """Authorize one household document and return a signed original-file URL.
 
     user_id is accepted temporarily for backward compatibility and ignored.
+    ``inline_view`` returns a signed delivery URL for browser rendering instead
+    of a private-download URL. Existing agent downloads remain unchanged.
     """
 
     scoped_role = _authorized_role(role)
@@ -683,11 +693,18 @@ def get_original_document(
     )
 
     try:
-        download_url = generate_download_url(
+        download_url = document_view_url(
             str(row.storage_key),
             _download_format(row),
-            resource_type="image",
+            document_id=str(row.document_id),
+            filename=str(row.original_filename or "document"),
+            mime_type=str(row.mime_type or "application/octet-stream"),
+            role=scoped_role.value,
+            user_id=user_id,
+            inline=inline_view,
         )
+    except CloudinaryConfigurationError as exc:
+        raise DocumentRetrievalError(str(exc), status_code=503) from None
     except DocumentRetrievalError:
         raise
     except Exception:
@@ -696,7 +713,8 @@ def get_original_document(
             row.document_id,
         )
         raise DocumentRetrievalError(
-            "Original document is temporarily unavailable."
+            "Original document storage is temporarily unavailable.",
+            status_code=503,
         ) from None
 
     return {

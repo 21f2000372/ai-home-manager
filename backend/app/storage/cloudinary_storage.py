@@ -21,17 +21,28 @@ from app.config import config
 from app.rag.file_validation import validate_file
 
 
+class CloudinaryConfigurationError(RuntimeError):
+    """Raised when private Cloudinary storage credentials are unavailable."""
+
+
 def configure_cloudinary() -> None:
     """Configure the Cloudinary Python SDK."""
 
-    if not config.CLOUDINARY_CLOUD_NAME:
-        raise RuntimeError("CLOUDINARY_CLOUD_NAME is missing.")
-
-    if not config.CLOUDINARY_API_KEY:
-        raise RuntimeError("CLOUDINARY_API_KEY is missing.")
-
-    if not config.CLOUDINARY_API_SECRET:
-        raise RuntimeError("CLOUDINARY_API_SECRET is missing.")
+    missing = [
+        name
+        for name, value in (
+            ("CLOUDINARY_CLOUD_NAME", config.CLOUDINARY_CLOUD_NAME),
+            ("CLOUDINARY_API_KEY", config.CLOUDINARY_API_KEY),
+            ("CLOUDINARY_API_SECRET", config.CLOUDINARY_API_SECRET),
+        )
+        if not value
+    ]
+    if missing:
+        raise CloudinaryConfigurationError(
+            "Document storage is not configured. Set "
+            + ", ".join(missing)
+            + " in backend/.env."
+        )
 
     cloudinary.config(
         cloud_name=config.CLOUDINARY_CLOUD_NAME,
@@ -136,6 +147,26 @@ def generate_download_url(
         resource_type=resource_type,
         type="authenticated",
     )
+
+
+def generate_view_url(
+    public_id: str,
+    file_format: str,
+    *,
+    resource_type: str = "image",
+) -> str:
+    """Generate a signed authenticated delivery URL for inline viewing."""
+
+    configure_cloudinary()
+    url, _ = cloudinary.utils.cloudinary_url(
+        public_id,
+        format=file_format,
+        resource_type=resource_type,
+        type="authenticated",
+        sign_url=True,
+        secure=True,
+    )
+    return str(url)
 
 
 def delete_file(
