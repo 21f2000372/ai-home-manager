@@ -1402,6 +1402,19 @@ def _create_domain_record(
         )
         session.add(row)
         session.flush()
+
+        # ---  NOTIFICATION ------------------------------------------
+        if assigned_to and assigned_to != user_id:
+            from app.models.notifications import Notification
+            session.add(
+                Notification(
+                    user_id=assigned_to,
+                    title="New Task from Document",
+                    message=f"A task was created from an uploaded document: '{row.title}'",
+                )
+            )
+        #----------------------------------------------------------------
+
         return "tasks", str(row.task_id), (
             "Created task '{0}'.".format(row.title)
         )

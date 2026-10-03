@@ -148,6 +148,17 @@ class TaskService:
             status=TaskStatus.OPEN,
         )
         session.add(task)
+
+        if assigned_to_id and assigned_to_id != created_by_id:
+            from app.models.notifications import Notification
+            session.add(
+                Notification(
+                    user_id=assigned_to_id,
+                    title="New Task Assigned",
+                    message=f"You have been assigned: '{task.title}'",
+                )
+            )
+
         session.commit()
         return task, conflicts
 
@@ -200,6 +211,37 @@ class TaskService:
         session.commit()
         return task
 
+    @staticmethod
+    def list_user_tasks(
+        session: Session,
+        user_id: str,
+        status: Optional[TaskStatus] = None,
+    ) -> List[Task]:
+        """Fetch tasks assigned specifically to a given user."""
+        priority_rank = case(
+            (Task.priority == Priority.HIGH, 1),
+            (Task.priority == Priority.NORMAL, 2),
+            (Task.priority == Priority.LOW, 3),
+            else_=4,
+        )
+        status_rank = case(
+            (Task.status == TaskStatus.IN_PROGRESS, 1),
+            (Task.status == TaskStatus.OPEN, 2),
+            (Task.status == TaskStatus.DONE, 3),
+            (Task.status == TaskStatus.CANCELLED, 4),
+            else_=5,
+        )
+        query = session.query(Task).filter(Task.assigned_to == user_id)
+        if status:
+            query = query.filter(Task.status == status)
+
+        return query.order_by(
+            Task.due_at.asc().nullslast(),
+            priority_rank.asc(),
+            status_rank.asc(),
+            Task.created_at.asc(),
+        ).all()
+
     @classmethod
     def update_task(
         cls,
@@ -238,12 +280,31 @@ class TaskService:
                 user_id=assigned_to_id or task.assigned_to,
                 exclude_task_id=task.task_id,
             )
+        old_assigned = task.assigned_to
 
         task.title = title.strip()
         task.description = description.strip() if description else None
         task.assigned_to = assigned_to_id
         task.due_at = due_at
         task.priority = priority
+
+        if assigned_to_id and assigned_to_id != old_assigned:
+            from app.models.notifications import Notification
+            session.add(
+                Notification(
+                    user_id=assigned_to_id,
+                    title="Task Reassigned to You",
+                    message=f"You have been assigned the task: '{task.title}'",
+                )
+            )
+        else:
+            session.add(
+                Notification(
+                    user_id=old_assigned,
+                    title="Task Updated",
+                    message=f"The task '{task.title}' has been updated.",
+                )
+            )
         session.commit()
         return task, conflicts
 
@@ -370,6 +431,18 @@ class CalendarService:
         )
         event.attendees = users
         session.add(event)
+
+        from app.models.notifications import Notification
+        for attendee in users:
+            if attendee.user_id != organizer_id:
+                session.add(
+                    Notification(
+                        user_id=attendee.user_id,
+                        title="New Calendar Event",
+                        message=f"You were added to '{event.title}' scheduled for {starts_at.strftime('%Y-%m-%d %H:%M')}",
+                    )
+                )
+                
         session.commit()
         return event, conflicts
 
@@ -384,6 +457,25 @@ class CalendarService:
             query = query.filter(CalendarEvent.ends_at >= range_start)
         if range_end:
             query = query.filter(CalendarEvent.starts_at <= range_end)
+        return query.order_by(CalendarEvent.starts_at.asc()).all()
+
+    @staticmethod
+    def list_user_events(
+        session: Session,
+        user_id: str,
+        range_start: Optional[datetime] = None,
+        range_end: Optional[datetime] = None,
+    ) -> List[CalendarEvent]:
+        """Fetch events owned by or attended by a specific user."""
+        query = session.query(CalendarEvent).filter(
+            (CalendarEvent.owner_id == user_id)
+            | (CalendarEvent.attendees.any(User.user_id == user_id))
+        )
+        if range_start:
+            query = query.filter(CalendarEvent.ends_at >= range_start)
+        if range_end:
+            query = query.filter(CalendarEvent.starts_at <= range_end)
+
         return query.order_by(CalendarEvent.starts_at.asc()).all()
 
     @classmethod

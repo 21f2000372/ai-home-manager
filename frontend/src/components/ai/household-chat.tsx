@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
   FileText,
   Image as ImageIcon,
@@ -14,6 +14,7 @@ import { Button } from "@/components/design-system/button";
 import { Card } from "@/components/design-system/card";
 import { ApiError } from "@/lib/api/request";
 import {
+  fileToAttachment,
   sendAgentMessage,
   type AgentMessageResponse,
 } from "@/features/conversation/agent-api";
@@ -55,17 +56,53 @@ type HouseholdChatProps = {
   description?: string;
   initialMessage?: string;
   fileAccept?: string;
+  compact?: boolean;
+  suggestions?: string[];
+  showAttachments?: boolean;
+  showVoice?: boolean;
   onMessageProcessed?: (result: AgentMessageResponse) => void | Promise<void>;
 };
 
 const defaultMessage =
   "Tell me about a household task, or attach a text file and I will help turn it into an actionable plan.";
 
+const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
+
+/**
+ * Render message text, turning any URL into a clickable "Download" link.
+ * Used so document download links from the assistant are actionable.
+ */
+function renderMessageText(text: string) {
+  const parts = text.split(URL_PATTERN);
+  return parts.map((part, index) => {
+    if (URL_PATTERN.test(part)) {
+      // Reset lastIndex because the regex is global and reused in .test().
+      URL_PATTERN.lastIndex = 0;
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-semibold text-[#27736d] underline underline-offset-2 hover:text-[#1f574f]"
+        >
+          Download here
+        </a>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
+}
+
 export function HouseholdChat({
   title = "Household assistant",
   description = "Type, attach readable text, or dictate a request.",
   initialMessage = defaultMessage,
   fileAccept = ".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json",
+  compact = false,
+  suggestions = [],
+  showAttachments = true,
+  showVoice = true,
   onMessageProcessed,
 }: HouseholdChatProps) {
   const [draft, setDraft] = useState("");
@@ -80,36 +117,63 @@ export function HouseholdChat({
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const receiptInputRef = useRef<HTMLInputElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
 
   const chatMutation = useMutation({
-    mutationFn: (message: string) =>
-      sendAgentMessage({ message, conversationId,sessionId, }),
-    onSuccess: (result: AgentMessageResponse, message: string) => {
+    mutationFn: async (vars: { message: string; file: File | null }) => {
+      const attachment = vars.file ? await fileToAttachment(vars.file) : null;
+      return sendAgentMessage({ message: vars.message, conversationId, file: attachment });
+    },
+    onSuccess: (result: AgentMessageResponse, vars: { message: string; file: File | null }) => {
       if (result.conversation_id) setConversationId(result.conversation_id);
       if (result.session_id)setConversationId(result.conversation_id);
       void onMessageProcessed?.(result);
+      // Clear the attached receipt once it's been sent.
+      if (receipt?.previewUrl) URL.revokeObjectURL(receipt.previewUrl);
+      setReceipt(null);
+      const userText = vars.file ? `${vars.message}  📎 ${vars.file.name}` : vars.message;
+
+      let assistantText = result.error ?? result.response ?? "I could not produce a response.";
+
+      // The LLM sometimes drops/placeholders a document download URL in its
+      // prose. Pull the real URL from the raw tool results (planned_actions)
+      // and append it so the download link is always clickable.
+      const toolText = (result.planned_actions ?? [])
+        .map((action) => action.result ?? "")
+        .join("\n");
+      const urlMatch = toolText.match(/https?:\/\/[^\s)]+/);
+      if (urlMatch && !/https?:\/\//.test(assistantText)) {
+        assistantText += `\n\nDownload link: ${urlMatch[0]}`;
+      }
+
       setMessages((current) => [
         ...current,
-        { id: crypto.randomUUID(), role: "user", text: message },
+        { id: crypto.randomUUID(), role: "user", text: userText },
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          text:
-            result.error ??
-            result.response ??
-            "I could not produce a response.",
+          text: assistantText,
         },
       ]);
     },
   });
 
+  useEffect(() => {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+    messageList.scrollTo({ top: messageList.scrollHeight, behavior: "smooth" });
+  }, [messages, chatMutation.isPending]);
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const message = draft.trim();
-    if (!message || chatMutation.isPending) return;
+    const typed = draft.trim();
+    // Allow sending if there's text OR an attached receipt.
+    if ((!typed && !receipt) || chatMutation.isPending) return;
+    // The backend requires a non-empty message, so default one when only a file is sent.
+    const message = typed || "Please review this document.";
     setDraft("");
     setInputError(null);
-    chatMutation.mutate(message);
+    chatMutation.mutate({ message, file: receipt?.file ?? null });
   }
 
   async function readFile(event: ChangeEvent<HTMLInputElement>) {
@@ -217,32 +281,37 @@ export function HouseholdChat({
       : requestError
         ? "The assistant could not process that message."
         : inputError;
+  const visibleMessages = compact
+    ? messages.filter((message) => message.id !== "assistant-welcome")
+    : messages;
+  const shouldShowMessages = visibleMessages.length > 0 || chatMutation.isPending;
 
   return (
-    <Card className="p-4 sm:p-6">
+    <Card className={compact ? "p-4" : "p-4 sm:p-6"}>
       <div className="flex items-start gap-3 sm:gap-4">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#D19A4C]">
+          {!compact && <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#D19A4C]">
             Household assistant
-          </p>
-          <h2 className="mt-2 text-lg font-bold text-[var(--ink)] sm:text-xl">
+          </p>}
+          <h2 className={compact ? "text-base font-bold text-[var(--ink)]" : "mt-2 text-lg font-bold text-[var(--ink)] sm:text-xl"}>
             {title}
           </h2>
-          <p className="mt-1 text-sm leading-6 muted">{description}</p>
+          {!compact && <p className="mt-1 text-sm leading-6 muted">{description}</p>}
         </div>
         <FileText className="mt-1 shrink-0 text-[#5E9278]" size={20} />
       </div>
 
-      <div
-        className="mt-5 max-h-64 space-y-3 overflow-y-auto pr-1"
+      {shouldShowMessages && <div
+        ref={messageListRef}
+        className={compact ? "mt-3 max-h-40 space-y-2 overflow-y-auto pr-1" : "mt-5 max-h-64 space-y-3 overflow-y-auto pr-1"}
         aria-live="polite"
       >
-        {messages.map((message) => (
+        {visibleMessages.map((message) => (
           <div
             key={message.id}
-            className={`max-w-[92%] rounded-2xl p-3 text-sm leading-6 sm:max-w-2xl ${message.role === "user" ? "ml-auto bg-[#27736d] text-white" : "bg-[#ECEAE4] text-[var(--ink)]"}`}
+            className={`max-w-[92%] whitespace-pre-wrap rounded-2xl p-3 text-sm leading-6 sm:max-w-2xl ${message.role === "user" ? "ml-auto bg-[#27736d] text-white" : "bg-[#ECEAE4] text-[var(--ink)]"}`}
           >
-            {message.text}
+            {message.role === "assistant" ? renderMessageText(message.text) : message.text}
           </div>
         ))}
         {chatMutation.isPending && (
@@ -251,14 +320,29 @@ export function HouseholdChat({
             Thinking...
           </div>
         )}
-      </div>
+      </div>}
 
-      <form className="mt-5" onSubmit={submit}>
+      <form className={compact ? "mt-3" : "mt-5"} onSubmit={submit}>
+        {suggestions.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => setDraft(suggestion)}
+                className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[#3D7C63] transition hover:bg-[#E4F0E8]"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          className="task-input min-h-20 w-full resize-y py-3"
-          placeholder="e.g. Remind Priya to buy vegetables tomorrow"
+          rows={compact ? 1 : undefined}
+          className={`task-input w-full resize-y ${compact ? 'min-h-11 max-h-20 py-2.5' : 'min-h-20 py-3'}`}
+          placeholder={compact ? "Ask about your household" : "e.g. Remind Priya to buy vegetables tomorrow"}
           aria-label="Message household assistant"
         />
         {receipt && (
@@ -279,8 +363,7 @@ export function HouseholdChat({
                 {receipt.file.name}
               </p>
               <p className="text-xs muted">
-                {(receipt.file.size / 1024).toFixed(0)} KB · attached (not
-                uploaded yet)
+                {(receipt.file.size / 1024).toFixed(0)} KB · will be sent with your message
               </p>
             </div>
             <button
@@ -296,6 +379,7 @@ export function HouseholdChat({
         )}
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
+            {showAttachments && <>
             <input
               ref={fileInputRef}
               type="file"
@@ -332,7 +416,8 @@ export function HouseholdChat({
               <span className="hidden sm:inline">Attach receipt</span>
               <span className="sm:hidden">Receipt</span>
             </Button>
-            <Button
+            </>}
+            {showVoice && <Button
               type="button"
               tone={isListening ? "danger" : "neutral"}
               onClick={toggleVoiceInput}
@@ -343,11 +428,11 @@ export function HouseholdChat({
             >
               {isListening ? <Square size={16} /> : <Mic size={16} />}
               {isListening ? "Stop" : "Voice"}
-            </Button>
+            </Button>}
           </div>
           <Button
             type="submit"
-            disabled={!draft.trim() || chatMutation.isPending}
+            disabled={(!draft.trim() && !receipt) || chatMutation.isPending}
             className="w-full sm:w-auto"
           >
             <Send size={16} />

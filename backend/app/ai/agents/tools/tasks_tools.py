@@ -184,6 +184,7 @@ def create_task(
             assigned_to_id=assigned_to_id,
             due_at=parsed_due_at,
             priority=task_priority,
+            force=True,
         )
 
         if task is None:

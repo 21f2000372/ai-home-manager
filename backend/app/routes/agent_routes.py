@@ -44,6 +44,14 @@ from app.ai.agents.tools.tasks_tools import (
 
 )
 
+from app.ai.agents.request_context import (
+
+    set_agent_request_identity,
+
+    reset_agent_request_identity,
+
+)
+
 from app.auth.decorators import login_required
 
 from app.config import config
