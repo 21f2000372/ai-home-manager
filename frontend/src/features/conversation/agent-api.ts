@@ -167,9 +167,7 @@ export type AgentMessageResponse = {
   awaiting_confirmation?: boolean;
   error: string | null;
   document?: AgentDocument | null;
-  awaiting_confirmation?: boolean;
   mode?: string;
-  session_id?: string | null;
   suggestion?: string | null;
 };
 
