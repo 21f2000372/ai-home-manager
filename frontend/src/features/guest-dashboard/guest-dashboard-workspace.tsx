@@ -13,15 +13,20 @@ import {
   rejectNotification,
   type GuestNotification,
 } from './guest-api';
+import { parseServerDate } from '@/lib/date-utils';
 
 const notificationsKey = ['guest', 'notifications'] as const;
 const respondedKey = ['guest', 'responded'] as const;
 
 function formatDue(due: string | null) {
   if (!due) return null;
-  const date = new Date(due);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const date = parseServerDate(due);
+  if (!date) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
 }
 
 export function GuestDashboardWorkspace() {

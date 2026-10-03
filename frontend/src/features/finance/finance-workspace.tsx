@@ -8,6 +8,7 @@ import { SectionHeading } from '@/components/design-system/section-heading';
 import { ApiError } from '@/lib/api/request';
 import { useSessionStore } from '@/stores/session-store';
 import { createBill, createExpense, deleteBill, deleteBudget, deleteExpense, getBills, getBudgets, getBudgetStatus, getExpenses, getUpcomingBills, setBudget, updateBill, updateExpense, type BillInput, type Budget, type BudgetStatus, type Expense, type ExpenseInput, type RecurringBill, type UpcomingBill } from './finance-api';
+import { parseServerDate } from '@/lib/date-utils';
 
 const expenseKey = ['household', 'finance', 'expenses'] as const;
 const budgetKey = ['household', 'finance', 'budgets'] as const;
@@ -21,7 +22,11 @@ const isoDate = () => new Date().toISOString().slice(0, 10);
 const toMinor = (value: string) => Math.round(Number(value) * 100);
 const fromMinor = (value: number) => (value / 100).toFixed(2);
 const money = (amount: number, currency: string) => new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(amount / 100);
-const dateLabel = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
+const dateLabel = (value: string) => {
+  const d = parseServerDate(value);
+  if (!d) return '—';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(d);
+};
 const emptyExpense = (): ExpenseForm => ({ amount: '', category: '', description: '', date: isoDate(), currency: 'INR' });
 const emptyBudget = (): BudgetForm => ({ category: '', amount: '', currency: 'INR' });
 const emptyBill = (): BillForm => ({ payee: '', amount: '', category: '', dueAt: isoDate(), recurrence: 'MONTHLY', currency: 'INR' });
@@ -69,10 +74,48 @@ export function FinanceWorkspace() {
   function closeBill() { setBillOpen(false); setEditingBill(null); setBillForm(emptyBill()); }
   function editExpense(expense: Expense) { setEditingExpense(expense); setExpenseForm({ amount: fromMinor(expense.amount_minor), category: expense.category, description: expense.description ?? '', date: expense.occurred_at.slice(0, 10), currency: expense.currency }); setExpenseOpen(true); }
   function editBill(bill: RecurringBill) { setEditingBill(bill); setBillForm({ payee: bill.payee, amount: fromMinor(bill.expected_amount_minor), category: bill.category ?? '', dueAt: bill.due_at.slice(0, 10), recurrence: bill.recurrence, currency: bill.currency }); setBillOpen(true); }
-  function submitExpense(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const amount = toMinor(expenseForm.amount); if (!expenseForm.category.trim() || !Number.isFinite(amount) || amount <= 0) return; expenseMutation.mutate({ id: editingExpense?.expense_id, input: { amount_minor: amount, category: expenseForm.category.trim(), description: expenseForm.description.trim() || null, occurred_at: new Date(`${expenseForm.date}T12:00:00`).toISOString(), currency: expenseForm.currency } }); }
-  function submitBudget(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const amount = toMinor(budgetForm.amount); if (!budgetForm.category.trim() || !Number.isFinite(amount) || amount < 0) return; budgetMutation.mutate({ category: budgetForm.category.trim(), limit_minor: amount, currency: budgetForm.currency, month, year }); }
-  function submitBill(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const amount = toMinor(billForm.amount); if (!billForm.payee.trim() || !billForm.dueAt || !Number.isFinite(amount) || amount < 0) return; billMutation.mutate({ id: editingBill?.bill_id, input: { payee: billForm.payee.trim(), expected_amount_minor: amount, category: billForm.category.trim() || null, due_at: new Date(`${billForm.dueAt}T12:00:00`).toISOString(), recurrence: billForm.recurrence, currency: billForm.currency } }); }
+  function submitExpense(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = toMinor(expenseForm.amount);
+    if (!expenseForm.category.trim() || !Number.isFinite(amount) || amount <= 0) return;
 
+    // Append UTC noon to preserve exact calendar day
+    const occurredAtIso = `${expenseForm.date}T12:00:00Z`;
+
+    expenseMutation.mutate({
+      id: editingExpense?.expense_id,
+      input: {
+        amount_minor: amount,
+        category: expenseForm.category.trim(),
+        description: expenseForm.description.trim() || null,
+        occurred_at: occurredAtIso,
+        currency: expenseForm.currency,
+      },
+    });
+  }  
+  function submitBudget(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const amount = toMinor(budgetForm.amount); if (!budgetForm.category.trim() || !Number.isFinite(amount) || amount < 0) return; budgetMutation.mutate({ category: budgetForm.category.trim(), limit_minor: amount, currency: budgetForm.currency, month, year }); }
+  function submitBill(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = toMinor(billForm.amount);
+    if (!billForm.payee.trim() || !billForm.dueAt || !Number.isFinite(amount) || amount < 0) return;
+
+    // Append UTC noon to preserve exact calendar day
+    const dueAtIso = `${billForm.dueAt}T12:00:00Z`;
+
+    billMutation.mutate({
+      id: editingBill?.bill_id,
+      input: {
+        payee: billForm.payee.trim(),
+        expected_amount_minor: amount,
+        category: billForm.category.trim() || null,
+        due_at: dueAtIso,
+        recurrence: billForm.recurrence,
+        currency: billForm.currency,
+      },
+    });
+  }
+
+  
   if (!canUseFinance) return <Restricted />;
   return <section className="space-y-6">
     <header className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end"><div><p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#5E9278]"><WalletCards size={14} />Finance & budget</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Household finances</h1><p className="mt-2 max-w-xl text-sm leading-6 muted">Record shared spending, track category budgets, and keep bills visible before they are due.</p></div><Button onClick={() => expenseOpen ? closeExpense() : setExpenseOpen(true)}>{expenseOpen ? <X size={16} /> : <Plus size={16} />}{expenseOpen ? 'Close form' : 'Add expense'}</Button></header>

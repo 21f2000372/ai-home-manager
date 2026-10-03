@@ -9,6 +9,7 @@ import { ApiError } from '@/lib/api/request';
 import { createCalendarEvent, getCalendarEvents } from './calendar-api';
 import type { CreateCalendarEventInput } from './calendar-types';
 import { formatEventRange } from './calendar-utils';
+import { localInputToUtcIso } from '@/lib/date-utils';
 
 const calendarQueryKey = ['household', 'calendar'] as const;
 
@@ -44,15 +45,16 @@ export function CalendarWorkspace() {
     event.preventDefault();
     if (!form.title.trim() || !form.starts_at || !form.ends_at) return;
 
-    const startsAt = new Date(form.starts_at);
-    const endsAt = new Date(form.ends_at);
-    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) return;
+    const startsAtIso = localInputToUtcIso(form.starts_at);
+    const endsAtIso = localInputToUtcIso(form.ends_at);
+
+    if (!startsAtIso || !endsAtIso || new Date(endsAtIso) <= new Date(startsAtIso)) return;
 
     setConflicts([]);
     createMutation.mutate({
       title: form.title.trim(),
-      starts_at: startsAt.toISOString(),
-      ends_at: endsAt.toISOString(),
+      starts_at: startsAtIso,
+      ends_at: endsAtIso,
     });
   }
 

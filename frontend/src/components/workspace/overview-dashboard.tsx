@@ -13,6 +13,7 @@ import { getTasks } from '@/features/tasks-schedule/task-api';
 import type { HouseholdTask } from '@/features/tasks-schedule/task-types';
 import { useSessionStore } from '@/stores/session-store';
 import { MetricCard } from './metric-card';
+import { parseServerDate, formatLocalDateTime } from '@/lib/date-utils';
 
 const taskQueryKey = ['household', 'tasks'] as const;
 const calendarQueryKey = ['household', 'calendar'] as const;
@@ -84,8 +85,20 @@ function LoadingRows({ label }: { label: string }) { return <div className="spac
 function EmptyState({ message }: { message: string }) { return <p className="rounded-lg bg-[var(--surface-muted)] p-3 text-sm leading-5 muted">{message}</p>; }
 function metricValue(isLoading: boolean, value: number) { return isLoading ? '…' : String(value); }
 function workspacePath(tenantId: string | undefined, workspace: string) { return `/t/${encodeURIComponent(tenantId ?? 'home-lakeview')}/${workspace}`; }
-function getUpcomingEvents(events: CalendarEvent[]) { const now = Date.now(); return [...events].filter((event) => !Number.isNaN(new Date(event.starts_at).getTime()) && new Date(event.starts_at).getTime() >= now).sort((left, right) => left.starts_at.localeCompare(right.starts_at)); }
-function formatDateTime(value: string) { const date = new Date(value); if (Number.isNaN(date.getTime())) return 'Date unavailable'; return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date); }
+function getUpcomingEvents(events: CalendarEvent[]) {
+  const now = Date.now();
+  return [...events]
+    .filter((event) => {
+      const parsed = parseServerDate(event.starts_at);
+      return parsed !== null && parsed.getTime() >= now;
+    })
+    .sort((left, right) => left.starts_at.localeCompare(right.starts_at));
+}
+function formatDateTime(value: string) {
+  const date = parseServerDate(value);
+  if (!date) return 'Date unavailable';
+  return formatLocalDateTime(value);
+}
 function formatQuantity(quantity: number, unit: string | null) { return `${quantity}${unit ? ` ${unit}` : ''} remaining`; }
 function formatOptionalQuantity(quantity: number | null, unit: string | null) { if (quantity === null) return unit ?? 'Quantity not specified'; return `${quantity}${unit ? ` ${unit}` : ''}`; }
 function money(amountMinor: number, currency: string) { return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0 }).format(amountMinor / 100); }

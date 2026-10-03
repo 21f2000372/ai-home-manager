@@ -10,6 +10,8 @@ from app.models.enums import MembershipStatus, Priority, TaskStatus
 from app.models.people import Membership, User
 from app.models.tasks import CalendarEvent, Task
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 
 def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
     if dt is None:
@@ -432,6 +434,10 @@ class CalendarService:
         event.attendees = users
         session.add(event)
 
+        utc_start = _to_utc(starts_at)
+        ist_start = utc_start.astimezone(IST)
+        formatted_ist_time = ist_start.strftime('%d %b %Y at %I:%M %p IST')
+
         from app.models.notifications import Notification
         for attendee in users:
             if attendee.user_id != organizer_id:
@@ -439,7 +445,7 @@ class CalendarService:
                     Notification(
                         user_id=attendee.user_id,
                         title="New Calendar Event",
-                        message=f"You were added to '{event.title}' scheduled for {starts_at.strftime('%Y-%m-%d %H:%M')}",
+                        message=f"You were added to '{event.title}' scheduled for {formatted_ist_time}",
                     )
                 )
                 

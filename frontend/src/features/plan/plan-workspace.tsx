@@ -45,8 +45,17 @@ import {
 } from '@/features/tasks-schedule/task-api';
 import {
   getNextTaskStatus,
-  toDateTimeLocalValue,
 } from '@/features/tasks-schedule/task-utils';
+
+import {
+  parseServerDate,
+  localInputToUtcIso,
+  toDateTimeLocalValue,
+  formatLocalTime,
+  formatLocalDateTime,
+  localDayKey,
+  isSameLocalDate,
+} from '@/lib/date-utils';
 
 const taskQueryRoot = ['household', 'tasks'] as const;
 const calendarQueryKey = ['household', 'calendar'] as const;
@@ -155,12 +164,13 @@ export function PlanWorkspace() {
   const datedTasks = useMemo(() => {
     const firstDay = days[0].key;
     const lastDay = days[days.length - 1].key;
-    return visibleTasks.filter(
-      (task) =>
-        task.due_at &&
-        dayKey(new Date(task.due_at)) >= firstDay &&
-        dayKey(new Date(task.due_at)) <= lastDay,
-    );
+    return visibleTasks.filter((task) => {
+      if (!task.due_at) return false;
+      const parsed = parseServerDate(task.due_at);
+      if (!parsed) return false;
+      const key = localDayKey(parsed);
+      return key >= firstDay && key <= lastDay;
+    });
   }, [days, visibleTasks]);
 
   const inboxTasks = useMemo(
@@ -225,7 +235,7 @@ export function PlanWorkspace() {
       title: taskForm.title.trim(),
       description: taskForm.description?.trim() || undefined,
       assigned_to: taskForm.assigned_to || undefined,
-      due_at: taskForm.due_at ? new Date(taskForm.due_at).toISOString() : undefined,
+      due_at: localInputToUtcIso(taskForm.due_at),
       force: false,
     };
 
@@ -265,29 +275,20 @@ export function PlanWorkspace() {
   async function submitEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setClientError(null);
-    if (
-      !eventForm.title.trim() ||
-      !eventForm.starts_at ||
-      !eventForm.ends_at ||
-      isReadOnly
-    )
-      return;
+    if (!eventForm.title.trim() || !eventForm.starts_at || !eventForm.ends_at || isReadOnly) return;
 
-    const startsAt = new Date(eventForm.starts_at);
-    const endsAt = new Date(eventForm.ends_at);
-    if (
-      Number.isNaN(startsAt.getTime()) ||
-      Number.isNaN(endsAt.getTime()) ||
-      endsAt <= startsAt
-    ) {
+    const utcStartsAt = localInputToUtcIso(eventForm.starts_at);
+    const utcEndsAt = localInputToUtcIso(eventForm.ends_at);
+
+    if (!utcStartsAt || !utcEndsAt || new Date(utcEndsAt) <= new Date(utcStartsAt)) {
       setClientError('The event end time must occur after the start time.');
       return;
     }
 
     const payload: CreateCalendarEventInput = {
       title: eventForm.title.trim(),
-      starts_at: startsAt.toISOString(),
-      ends_at: endsAt.toISOString(),
+      starts_at: utcStartsAt,
+      ends_at: utcEndsAt,
       attendee_ids: eventForm.attendee_ids ?? [],
       force: false,
     };
@@ -484,26 +485,26 @@ export function PlanWorkspace() {
                 }`}
               >
                 {days.map((day) => (
-                  <DayColumn
-                    key={day.key}
-                    day={day}
-                    events={visibleEvents.filter((item) =>
-                      isSameDay(item.starts_at, day.date),
-                    )}
-                    tasks={datedTasks.filter((item) =>
-                      isSameDay(item.due_at!, day.date),
-                    )}
-                    members={memberNames}
-                    onEdit={isReadOnly ? undefined : beginTaskEdit}
-                    onToggle={(task) =>
-                      statusMutation.mutate({
-                        taskId: task.task_id,
-                        status: getNextTaskStatus(task.status),
-                      })
-                    }
-                    togglingId={statusMutation.variables?.taskId}
-                  />
-                ))}
+                    <DayColumn
+                      key={day.key}
+                      day={day}
+                      events={visibleEvents.filter((item) =>
+                        isSameLocalDate(item.starts_at, day.date),
+                      )}
+                      tasks={datedTasks.filter((item) =>
+                        isSameLocalDate(item.due_at, day.date),
+                      )}
+                      members={memberNames}
+                      onEdit={isReadOnly ? undefined : beginTaskEdit}
+                      onToggle={(task) =>
+                        statusMutation.mutate({
+                          taskId: task.task_id,
+                          status: getNextTaskStatus(task.status),
+                        })
+                      }
+                      togglingId={statusMutation.variables?.taskId}
+                    />
+                  ))}
               </div>
             </div>
           )}
@@ -1174,55 +1175,35 @@ function startOfDay(value: Date) {
 }
 
 function dayKey(value: Date) {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(
-    2,
-    '0',
-  )}-${String(value.getDate()).padStart(2, '0')}`;
+  return localDayKey(value);
 }
 
 function isSameDay(value: string, day: Date) {
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime()) && dayKey(date) === dayKey(day);
+  return isSameLocalDate(value, day);
 }
 
 function isInDays(value: string, days: Day[]) {
-  return days.some((day) => isSameDay(value, day.date));
+  return days.some((day) => isSameLocalDate(value, day.date));
 }
 
 function isToday(value: Date) {
-  return dayKey(value) === dayKey(new Date());
+  return localDayKey(value) === localDayKey(new Date());
 }
 
 function formatDue(dateStr?: string) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(d);
+  return formatLocalDateTime(dateStr);
 }
 
 function timeLabel(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value));
+  return formatLocalTime(value);
 }
 
 function dateTimeLabel(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value));
+  return formatLocalDateTime(value);
 }
 
 function timeRange(event: CalendarEvent) {
-  return `${timeLabel(event.starts_at)} — ${timeLabel(event.ends_at)}`;
+  return `${formatLocalTime(event.starts_at)} — ${formatLocalTime(event.ends_at)}`;
 }
 
 function taskSort(left: HouseholdTask, right: HouseholdTask) {
