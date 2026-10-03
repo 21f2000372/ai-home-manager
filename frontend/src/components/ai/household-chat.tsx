@@ -16,6 +16,7 @@ import { ApiError } from "@/lib/api/request";
 import {
   fileToAttachment,
   sendAgentMessage,
+  stripPlaceholderLink,
   type AgentMessageResponse,
 } from "@/features/conversation/agent-api";
 
@@ -121,27 +122,41 @@ export function HouseholdChat({
   const chatMutation = useMutation({
     mutationFn: async (vars: { message: string; file: File | null }) => {
       const attachment = vars.file ? await fileToAttachment(vars.file) : null;
-      return sendAgentMessage({ message: vars.message, conversationId, file: attachment });
+      return sendAgentMessage({
+        message: vars.message,
+        conversationId,
+        file: attachment,
+      });
     },
-    onSuccess: (result: AgentMessageResponse, vars: { message: string; file: File | null }) => {
+    onSuccess: (
+      result: AgentMessageResponse,
+      vars: { message: string; file: File | null },
+    ) => {
       if (result.conversation_id) setConversationId(result.conversation_id);
       void onMessageProcessed?.(result);
       // Clear the attached receipt once it's been sent.
       if (receipt?.previewUrl) URL.revokeObjectURL(receipt.previewUrl);
       setReceipt(null);
-      const userText = vars.file ? `${vars.message}  📎 ${vars.file.name}` : vars.message;
+      const userText = vars.file
+        ? `${vars.message}  📎 ${vars.file.name}`
+        : vars.message;
 
-      let assistantText = result.error ?? result.response ?? "I could not produce a response.";
+      let assistantText =
+        result.error ?? result.response ?? "I could not produce a response.";
 
-      // The LLM sometimes drops/placeholders a document download URL in its
-      // prose. Pull the real URL from the raw tool results (planned_actions)
-      // and append it so the download link is always clickable.
-      const toolText = (result.planned_actions ?? [])
-        .map((action) => action.result ?? "")
-        .join("\n");
-      const urlMatch = toolText.match(/https?:\/\/[^\s)]+/);
-      if (urlMatch && !/https?:\/\//.test(assistantText)) {
-        assistantText += `\n\nDownload link: ${urlMatch[0]}`;
+      // The backend deliberately strips the real signed download URL out of
+      // the conversational prose and every planned_actions[*].result, leaving
+      // a "[secure document link available]" placeholder. The working URL is
+      // delivered separately in the structured `document` field. So we remove
+      // the dead placeholder link from the prose and append the real one.
+      assistantText = stripPlaceholderLink(assistantText);
+
+      const downloadUrl = result.document?.download_url;
+      if (downloadUrl && !/https?:\/\//.test(assistantText)) {
+        const label = result.document?.filename
+          ? `Download ${result.document.filename}`
+          : "Download link";
+        assistantText += `\n\n${label}: ${downloadUrl}`;
       }
 
       setMessages((current) => [
@@ -282,43 +297,62 @@ export function HouseholdChat({
   const visibleMessages = compact
     ? messages.filter((message) => message.id !== "assistant-welcome")
     : messages;
-  const shouldShowMessages = visibleMessages.length > 0 || chatMutation.isPending;
+  const shouldShowMessages =
+    visibleMessages.length > 0 || chatMutation.isPending;
 
   return (
     <Card className={compact ? "p-4" : "p-4 sm:p-6"}>
       <div className="flex items-start gap-3 sm:gap-4">
         <div className="min-w-0 flex-1">
-          {!compact && <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#D19A4C]">
-            Household assistant
-          </p>}
-          <h2 className={compact ? "text-base font-bold text-[var(--ink)]" : "mt-2 text-lg font-bold text-[var(--ink)] sm:text-xl"}>
+          {!compact && (
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#D19A4C]">
+              Household assistant
+            </p>
+          )}
+          <h2
+            className={
+              compact
+                ? "text-base font-bold text-[var(--ink)]"
+                : "mt-2 text-lg font-bold text-[var(--ink)] sm:text-xl"
+            }
+          >
             {title}
           </h2>
-          {!compact && <p className="mt-1 text-sm leading-6 muted">{description}</p>}
+          {!compact && (
+            <p className="mt-1 text-sm leading-6 muted">{description}</p>
+          )}
         </div>
         <FileText className="mt-1 shrink-0 text-[#5E9278]" size={20} />
       </div>
 
-      {shouldShowMessages && <div
-        ref={messageListRef}
-        className={compact ? "mt-3 max-h-40 space-y-2 overflow-y-auto pr-1" : "mt-5 max-h-64 space-y-3 overflow-y-auto pr-1"}
-        aria-live="polite"
-      >
-        {visibleMessages.map((message) => (
-          <div
-            key={message.id}
-            className={`max-w-[92%] whitespace-pre-wrap rounded-2xl p-3 text-sm leading-6 sm:max-w-2xl ${message.role === "user" ? "ml-auto bg-[#27736d] text-white" : "bg-[#ECEAE4] text-[var(--ink)]"}`}
-          >
-            {message.role === "assistant" ? renderMessageText(message.text) : message.text}
-          </div>
-        ))}
-        {chatMutation.isPending && (
-          <div className="flex items-center gap-2 text-sm muted">
-            <LoaderCircle className="animate-spin" size={16} />
-            Thinking...
-          </div>
-        )}
-      </div>}
+      {shouldShowMessages && (
+        <div
+          ref={messageListRef}
+          className={
+            compact
+              ? "mt-3 max-h-40 space-y-2 overflow-y-auto pr-1"
+              : "mt-5 max-h-64 space-y-3 overflow-y-auto pr-1"
+          }
+          aria-live="polite"
+        >
+          {visibleMessages.map((message) => (
+            <div
+              key={message.id}
+              className={`max-w-[92%] whitespace-pre-wrap rounded-2xl p-3 text-sm leading-6 sm:max-w-2xl ${message.role === "user" ? "ml-auto bg-[#27736d] text-white" : "bg-[#ECEAE4] text-[var(--ink)]"}`}
+            >
+              {message.role === "assistant"
+                ? renderMessageText(message.text)
+                : message.text}
+            </div>
+          ))}
+          {chatMutation.isPending && (
+            <div className="flex items-center gap-2 text-sm muted">
+              <LoaderCircle className="animate-spin" size={16} />
+              Thinking...
+            </div>
+          )}
+        </div>
+      )}
 
       <form className={compact ? "mt-3" : "mt-5"} onSubmit={submit}>
         {suggestions.length > 0 && (
@@ -339,8 +373,12 @@ export function HouseholdChat({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           rows={compact ? 1 : undefined}
-          className={`task-input w-full resize-y ${compact ? 'min-h-11 max-h-20 py-2.5' : 'min-h-20 py-3'}`}
-          placeholder={compact ? "Ask about your household" : "e.g. Remind Priya to buy vegetables tomorrow"}
+          className={`task-input w-full resize-y ${compact ? "min-h-11 max-h-20 py-2.5" : "min-h-20 py-3"}`}
+          placeholder={
+            compact
+              ? "Ask about your household"
+              : "e.g. Remind Priya to buy vegetables tomorrow"
+          }
           aria-label="Message household assistant"
         />
         {receipt && (
@@ -361,7 +399,8 @@ export function HouseholdChat({
                 {receipt.file.name}
               </p>
               <p className="text-xs muted">
-                {(receipt.file.size / 1024).toFixed(0)} KB · will be sent with your message
+                {(receipt.file.size / 1024).toFixed(0)} KB · will be sent with
+                your message
               </p>
             </div>
             <button
@@ -377,56 +416,60 @@ export function HouseholdChat({
         )}
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            {showAttachments && <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={fileAccept}
-              onChange={readFile}
-              className="sr-only"
-            />
-            <Button
-              type="button"
-              tone="neutral"
-              onClick={() => fileInputRef.current?.click()}
-              aria-label="Attach a text file"
-              title="Attach a text file"
-            >
-              <Paperclip size={16} />
-              <span className="hidden sm:inline">Attach file</span>
-              <span className="sm:hidden">File</span>
-            </Button>
-            <input
-              ref={receiptInputRef}
-              type="file"
-              accept={RECEIPT_ACCEPT}
-              onChange={selectReceipt}
-              className="sr-only"
-            />
-            <Button
-              type="button"
-              tone="neutral"
-              onClick={() => receiptInputRef.current?.click()}
-              aria-label="Attach a receipt image or PDF"
-              title="Attach a receipt image or PDF"
-            >
-              <ImageIcon size={16} />
-              <span className="hidden sm:inline">Attach receipt</span>
-              <span className="sm:hidden">Receipt</span>
-            </Button>
-            </>}
-            {showVoice && <Button
-              type="button"
-              tone={isListening ? "danger" : "neutral"}
-              onClick={toggleVoiceInput}
-              aria-label={
-                isListening ? "Stop voice input" : "Start voice input"
-              }
-              title={isListening ? "Stop voice input" : "Start voice input"}
-            >
-              {isListening ? <Square size={16} /> : <Mic size={16} />}
-              {isListening ? "Stop" : "Voice"}
-            </Button>}
+            {showAttachments && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={fileAccept}
+                  onChange={readFile}
+                  className="sr-only"
+                />
+                <Button
+                  type="button"
+                  tone="neutral"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach a text file"
+                  title="Attach a text file"
+                >
+                  <Paperclip size={16} />
+                  <span className="hidden sm:inline">Attach file</span>
+                  <span className="sm:hidden">File</span>
+                </Button>
+                <input
+                  ref={receiptInputRef}
+                  type="file"
+                  accept={RECEIPT_ACCEPT}
+                  onChange={selectReceipt}
+                  className="sr-only"
+                />
+                <Button
+                  type="button"
+                  tone="neutral"
+                  onClick={() => receiptInputRef.current?.click()}
+                  aria-label="Attach a receipt image or PDF"
+                  title="Attach a receipt image or PDF"
+                >
+                  <ImageIcon size={16} />
+                  <span className="hidden sm:inline">Attach receipt</span>
+                  <span className="sm:hidden">Receipt</span>
+                </Button>
+              </>
+            )}
+            {showVoice && (
+              <Button
+                type="button"
+                tone={isListening ? "danger" : "neutral"}
+                onClick={toggleVoiceInput}
+                aria-label={
+                  isListening ? "Stop voice input" : "Start voice input"
+                }
+                title={isListening ? "Stop voice input" : "Start voice input"}
+              >
+                {isListening ? <Square size={16} /> : <Mic size={16} />}
+                {isListening ? "Stop" : "Voice"}
+              </Button>
+            )}
           </div>
           <Button
             type="submit"
