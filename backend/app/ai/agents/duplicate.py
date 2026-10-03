@@ -526,6 +526,42 @@ def check_consistency(
 
     result = checker(arguments)
 
+    # Compatibility bridge for legacy checkers that return either:
+    #   (status, results_list)
+    # or:
+    #   (status, details, match)
+    #
+    # Never allow this adapter to fall through and implicitly return None.
+    if not isinstance(result, tuple):
+        return "CLEAR", []
+
+    if len(result) == 3:
+        status, details, match = result
+
+        if status == "NEW":
+            status = "CLEAR"
+
+        if status != "CLEAR" and match:
+            return status, [
+                {
+                    "severity": status,
+                    "details": details,
+                    "match": match,
+                }
+            ]
+
+        return "CLEAR", []
+
+    if len(result) == 2:
+        status, results = result
+
+        if not isinstance(results, list):
+            return "CLEAR", []
+
+        return status, results
+
+    return "CLEAR", []
+
 def _legacy_consistency_status(
         status: str,
     ) -> str:
