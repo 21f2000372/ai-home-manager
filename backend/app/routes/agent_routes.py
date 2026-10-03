@@ -27,7 +27,6 @@ from flask import (
     g,
     jsonify,
     request,
-    session as flask_session,
 )
 
 from werkzeug.datastructures import FileStorage
@@ -84,107 +83,6 @@ agent_bp = Blueprint(
     url_prefix="/api/agent",
 
 )
-# ---------------------------------------------------------------------------
-# Browser fallback conversation scope
-# ---------------------------------------------------------------------------
-
-_AGENT_SCOPE_USER_KEY = "agent_scope_user_id"
-_AGENT_CONVERSATION_KEY = "agent_conversation_id"
-_AGENT_SESSION_KEY = "agent_session_id"
-
-
-def _clear_browser_agent_scope() -> None:
-    """Forget the browser's remembered agent conversation."""
-
-    flask_session.pop(
-        _AGENT_SCOPE_USER_KEY,
-        None,
-    )
-    flask_session.pop(
-        _AGENT_CONVERSATION_KEY,
-        None,
-    )
-    flask_session.pop(
-        _AGENT_SESSION_KEY,
-        None,
-    )
-
-
-def _browser_agent_scope(
-    user_id: str,
-) -> Tuple[Optional[str], Optional[str]]:
-    """Return the browser's remembered scope for this exact user.
-
-    The Flask session may survive logout/login in the same browser.
-    Therefore the saved agent scope is reused only when it belongs
-    to the currently authenticated user.
-    """
-
-    current_user_id = str(user_id).strip()
-
-    stored_user_id = flask_session.get(
-        _AGENT_SCOPE_USER_KEY
-    )
-
-    if (
-        not isinstance(stored_user_id, str)
-        or stored_user_id.strip() != current_user_id
-    ):
-        _clear_browser_agent_scope()
-        return None, None
-
-    conversation_id = flask_session.get(
-        _AGENT_CONVERSATION_KEY
-    )
-    session_id = flask_session.get(
-        _AGENT_SESSION_KEY
-    )
-
-    if isinstance(conversation_id, str):
-        conversation_id = (
-            conversation_id.strip()
-            or None
-        )
-    else:
-        conversation_id = None
-
-    if isinstance(session_id, str):
-        session_id = (
-            session_id.strip()
-            or None
-        )
-    else:
-        session_id = None
-
-    # Never return a partially remembered scope.
-    if not conversation_id or not session_id:
-        _clear_browser_agent_scope()
-        return None, None
-
-    return conversation_id, session_id
-
-
-def _store_browser_agent_scope(
-    *,
-    user_id: str,
-    conversation_id: str,
-    session_id: str,
-) -> None:
-    """Remember a scope only after ownership validation succeeded."""
-
-    flask_session[
-        _AGENT_SCOPE_USER_KEY
-    ] = str(user_id)
-
-    flask_session[
-        _AGENT_CONVERSATION_KEY
-    ] = str(conversation_id)
-
-    flask_session[
-        _AGENT_SESSION_KEY
-    ] = str(session_id)
-
-
 
 
 def _run_for_current_user(
@@ -1059,18 +957,17 @@ def agent_request():
 
     """Process an authenticated chat or document request.
 
-    The frontend may omit conversation_id and session_id.
+    Conversation continuity is explicit in the API contract:
 
-    If both are omitted, the backend first attempts to reuse the
-    browser's last verified conversation scope for this authenticated
-    user. If none exists, a new scope is created.
+    - If both conversation_id and session_id are omitted, the server
+      resolves/creates a fresh conversation scope.
+    - If either identifier is supplied, the ownership service validates
+      exactly what the client supplied; no browser-session fallback is used.
+    - new_conversation=true forces both identifiers to be ignored so a
+      fresh conversation scope is created.
 
-    If either identifier is explicitly supplied, browser fallback is
-    not mixed into the request. The supplied scope is ownership-
-    validated before the agent runs.
-
-    Setting new_conversation=true clears the browser fallback and
-    forces creation of a fresh conversation scope.
+    Authentication remains server-side through login_required and
+    g.current_user/g.current_role.
 
     Every response after scope resolution returns both identifiers.
     """
@@ -1230,42 +1127,21 @@ def agent_request():
             )
 
             # --------------------------------------------------------------
-            # 1. Explicit new conversation
+            # Explicit conversation scope only
             # --------------------------------------------------------------
             if new_conversation:
-                # A forced new conversation must not inherit the
-                # browser's previous active chat.
-                _clear_browser_agent_scope()
-
                 resolved_conversation_id = None
                 resolved_session_id = None
-
-            # --------------------------------------------------------------
-            # 2. Explicit request scope
-            # --------------------------------------------------------------
-            elif (
-                request_conversation_id is not None
-                or request_session_id is not None
-            ):
-                # If the frontend supplies either identifier, do not fill
-                # the other one from browser state. The ownership service
-                # must validate exactly what the client supplied.
+            else:
+                # Pass exactly what the frontend supplied. When both are
+                # omitted, the ownership service creates a fresh scope.
+                # When either is supplied, it validates the supplied scope
+                # without filling values from browser/session state.
                 resolved_conversation_id = (
                     request_conversation_id
                 )
                 resolved_session_id = (
                     request_session_id
-                )
-
-            # --------------------------------------------------------------
-            # 3. Browser fallback
-            # --------------------------------------------------------------
-            else:
-                (
-                    resolved_conversation_id,
-                    resolved_session_id,
-                ) = _browser_agent_scope(
-                    current_user_id
                 )
 
             # --------------------------------------------------------------
@@ -1278,17 +1154,6 @@ def agent_request():
                 ),
                 session_id=(
                     resolved_session_id
-                ),
-            )
-
-            # Store only a successfully validated server-owned scope.
-            _store_browser_agent_scope(
-                user_id=current_user_id,
-                conversation_id=(
-                    scope.conversation_id
-                ),
-                session_id=(
-                    scope.session_id
                 ),
             )
 

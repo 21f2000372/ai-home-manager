@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from datetime import datetime
 
 from langchain_core.tools import tool
+from sqlalchemy import and_, or_
 
 from app.db.base import SessionLocal
 from app.models.enums import MembershipStatus, Priority, TaskStatus
@@ -257,12 +258,63 @@ def create_task(
 
 
 @tool
-def list_tasks(status: str = "") -> str:
-    """List tasks, optionally filtered by status."""
+def list_tasks(
+    status: str = "",
+    scope: str = "mine",
+) -> str:
+    """List tasks.
+
+    scope='mine' returns tasks assigned to the authenticated user plus
+    unassigned tasks created by that user. scope='household' returns all
+    household tasks. Use household scope only when the user explicitly asks
+    for all/household tasks.
+    """
     session = SessionLocal()
 
     try:
         query = session.query(Task)
+
+        normalized_scope = (
+            scope or "mine"
+        ).strip().casefold()
+
+        if normalized_scope in {
+            "mine",
+            "my",
+            "self",
+        }:
+            current_user_id = (
+                _agent_user_id.get() or ""
+            ).strip()
+
+            if not current_user_id:
+                return (
+                    "Authenticated user context is unavailable."
+                )
+
+            query = query.filter(
+                or_(
+                    Task.assigned_to
+                    == current_user_id,
+                    and_(
+                        Task.assigned_to.is_(None),
+                        Task.created_by
+                        == current_user_id,
+                    ),
+                )
+            )
+            heading = "Here are your tasks:"
+
+        elif normalized_scope in {
+            "household",
+            "all",
+        }:
+            heading = "Here are the household tasks:"
+
+        else:
+            return (
+                "Invalid scope. Use 'mine' or 'household'."
+            )
 
         if status:
             try:
@@ -273,7 +325,9 @@ def list_tasks(status: str = "") -> str:
                     "Use Open, InProgress, Done, or Cancelled."
                 )
 
-            query = query.filter(Task.status == task_status)
+            query = query.filter(
+                Task.status == task_status
+            )
 
         rows = (
             query
@@ -283,27 +337,64 @@ def list_tasks(status: str = "") -> str:
         )
 
         if not rows:
-            return "No tasks found."
+            return (
+                "No tasks found."
+                if normalized_scope in {
+                    "household",
+                    "all",
+                }
+                else "No tasks found for you."
+            )
 
         # Resolve assignee ids -> names in one query for readable output.
-        names = _member_names(session, [t.assigned_to for t in rows])
+        names = _member_names(
+            session,
+            [t.assigned_to for t in rows],
+        )
 
-        # Group tasks by status for a structured, scannable list.
         groups: dict[str, list[str]] = {}
+
         for task in rows:
             parts = [f"• {task.title}"]
-            if task.due_at:
-                parts.append(f"due {_friendly_datetime(task.due_at)}")
-            if task.assigned_to:
-                parts.append(f"assigned to {names.get(task.assigned_to, 'a household member')}")
-            # Compact reference (short id) so the user/agent can act on it later.
-            line = " — ".join([parts[0]] + parts[1:]) if len(parts) > 1 else parts[0]
-            line += f"  (ref {task.task_id[:8]})"
-            groups.setdefault(task.status.value, []).append(line)
 
-        # Present statuses in a sensible order.
-        order = [TaskStatus.OPEN.value, TaskStatus.IN_PROGRESS.value,
-                 TaskStatus.DONE.value, TaskStatus.CANCELLED.value]
+            if task.due_at:
+                parts.append(
+                    f"due {_friendly_datetime(task.due_at)}"
+                )
+
+            if task.assigned_to:
+                parts.append(
+                    "assigned to {}".format(
+                        names.get(
+                            task.assigned_to,
+                            "a household member",
+                        )
+                    )
+                )
+
+            line = (
+                " — ".join(
+                    [parts[0]] + parts[1:]
+                )
+                if len(parts) > 1
+                else parts[0]
+            )
+            line += (
+                f"  (ref {task.task_id[:8]})"
+            )
+
+            groups.setdefault(
+                task.status.value,
+                [],
+            ).append(line)
+
+        order = [
+            TaskStatus.OPEN.value,
+            TaskStatus.IN_PROGRESS.value,
+            TaskStatus.DONE.value,
+            TaskStatus.CANCELLED.value,
+        ]
+
         labels = {
             TaskStatus.OPEN.value: "Open",
             TaskStatus.IN_PROGRESS.value: "In progress",
@@ -311,11 +402,16 @@ def list_tasks(status: str = "") -> str:
             TaskStatus.CANCELLED.value: "Cancelled",
         }
 
-        sections = ["Here are the household tasks:"]
+        sections = [heading]
+
         for status_value in order:
             if groups.get(status_value):
-                sections.append(f"\n{labels[status_value]}")
-                sections.extend(groups[status_value])
+                sections.append(
+                    f"\n{labels[status_value]}"
+                )
+                sections.extend(
+                    groups[status_value]
+                )
 
         return "\n".join(sections)
 

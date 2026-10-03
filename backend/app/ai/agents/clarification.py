@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -17,6 +18,10 @@ from app.services.clarification_workflow import (
     complete_pending_clarification,
     persist_clarification,
 )
+from app.services.datetime_resolver import (
+    resolve_relative_date,
+    resolve_relative_datetime,
+)
 
 
 _REPAIR_WORDS = (
@@ -30,6 +35,37 @@ _REPAIR_WORDS = (
     "fixed",
     "fixing",
     "technician",
+)
+
+
+# Appliance nouns that can safely establish that a maintenance issue refers
+# to an appliance even when the specialist leaves appliance_id empty.
+# Existing database matching still decides which concrete appliance row is
+# plausible; this list only extracts the human-readable reference.
+_ISSUE_APPLIANCE_TERMS = (
+    "air conditioner",
+    "air conditioning",
+    "washing machine",
+    "water heater",
+    "microwave oven",
+    "dishwasher",
+    "refrigerator",
+    "fridge",
+    "geyser",
+    "washer",
+    "microwave",
+    "television",
+    "tv",
+    "ac",
+    "fan",
+    "oven",
+    "stove",
+    "dryer",
+    "freezer",
+    "purifier",
+    "ro",
+    "vacuum",
+    "chimney",
 )
 
 _NEW_APPLIANCE_RESPONSES = {
@@ -145,6 +181,59 @@ def _has_explicit_time(value: Any) -> bool:
             "noon",
         )
     )
+
+
+def _calendar_duration_minutes(value: Any) -> Optional[int]:
+    """Return an explicit calendar duration in minutes.
+
+    Duration is calendar-specific rather than date parsing, so it stays here
+    while all date/time interpretation remains in datetime_resolver.py.
+    """
+
+    raw = " ".join(
+        str(value or "").strip().casefold().split()
+    )
+
+    if not raw:
+        return None
+
+    if re.search(
+        r"\bfor\s+(?:an|a|one)\s+hour\b",
+        raw,
+    ):
+        return 60
+
+    if re.search(
+        r"\bfor\s+half\s+(?:an?\s+)?hour\b",
+        raw,
+    ):
+        return 30
+
+    hour_match = re.search(
+        r"\bfor\s+(\d+(?:\.\d+)?)\s+"
+        r"(?:hour|hours|hr|hrs)\b",
+        raw,
+    )
+
+    if hour_match:
+        minutes = int(
+            float(hour_match.group(1)) * 60
+        )
+        return minutes if minutes > 0 else None
+
+    minute_match = re.search(
+        r"\bfor\s+(\d+)\s+"
+        r"(?:minute|minutes|min|mins)\b",
+        raw,
+    )
+
+    if minute_match:
+        minutes = int(
+            minute_match.group(1)
+        )
+        return minutes if minutes > 0 else None
+
+    return None
 
 
 def _repair_related_task(
@@ -409,6 +498,44 @@ def _extract_appliance_reference_from_text(
     return ""
 
 
+def _extract_issue_appliance_reference_from_text(
+    value: Any,
+) -> str:
+    """Return an explicit appliance noun from issue text, if present.
+
+    This deliberately does not infer generic household fixtures such as walls,
+    doors or plumbing as appliances. If no appliance noun is present, a
+    report_issue action remains valid without appliance_id.
+    """
+
+    normalized = _normalize_choice_text(value)
+
+    if not normalized:
+        return ""
+
+    for term in sorted(
+        _ISSUE_APPLIANCE_TERMS,
+        key=lambda item: (-len(item), item),
+    ):
+        pattern = (
+            r"(?<!\w)"
+            + r"\s+".join(
+                re.escape(part)
+                for part in term.split()
+            )
+            + r"(?!\w)"
+        )
+
+        if re.search(
+            pattern,
+            normalized,
+            flags=re.IGNORECASE,
+        ):
+            return term
+
+    return ""
+
+
 def _appliance_reference_for_call(
     tool_name: str,
     args: Dict[str, Any],
@@ -435,6 +562,29 @@ def _appliance_reference_for_call(
         )
         if cleaned:
             return cleaned
+
+    # Issue wording usually describes a symptom rather than using
+    # repair/service/fix verbs. Extract only an explicit appliance noun here.
+    if tool_name == "report_issue":
+        issue_sources = [
+            args.get("description"),
+            message,
+            current_action.get(
+                "description"
+            ),
+        ]
+
+        for source in issue_sources:
+            reference = (
+                _extract_issue_appliance_reference_from_text(
+                    source
+                )
+            )
+
+            if reference:
+                return reference
+
+        return ""
 
     # Inspect independent sources in priority order. Do not concatenate them:
     # the same user request is often repeated in the action description.
@@ -629,11 +779,19 @@ def _appliance_question(
     status: str,
     reference: str,
     candidates: List[Dict[str, Any]],
+    tool_name: str = "",
 ) -> str:
     if status == SINGLE_MATCH:
         label = candidates[0][
             "display_label"
         ]
+
+        if tool_name == "report_issue":
+            return (
+                "I found an existing appliance record: "
+                f"{label}. Is this issue for that appliance, "
+                "or would you like to add a new appliance?"
+            )
 
         return (
             "I found an existing appliance record: "
@@ -945,6 +1103,7 @@ def _resolve_appliance_clarification(
                     or ""
                 ),
                 candidates,
+                tool_name=tool_name,
             ),
             "missing_field": (
                 "appliance_selection"
@@ -1001,6 +1160,7 @@ def _resolve_appliance_clarification(
                     resolution.status,
                     reference,
                     candidates,
+                    tool_name=tool_name,
                 )
             ),
             "missing_field": (
@@ -1020,6 +1180,7 @@ def _resolve_appliance_clarification(
                     NO_MATCH,
                     reference,
                     [],
+                    tool_name=tool_name,
                 )
             ),
             "missing_field": (
@@ -1124,7 +1285,7 @@ def _stage_appliance_creation_dependency(
     reference: str,
     is_resumed_clarification: bool,
 ) -> Dict[str, Any]:
-    """Insert add_appliance before the exact pending repair/task.
+    """Insert add_appliance before the exact pending maintenance/task action.
 
     The original tool call is preserved server-side on the parent action.
     The prerequisite itself still goes through normal consistency/RBAC/execution.
@@ -1140,7 +1301,7 @@ def _stage_appliance_creation_dependency(
             "pending_ai_message": None,
             "response": (
                 "What appliance should I add before "
-                "continuing this repair/service request?"
+                "continuing this maintenance request?"
             ),
             "clarification_needed": True,
             "clarification_context": {
@@ -1179,7 +1340,7 @@ def _stage_appliance_creation_dependency(
             "finished": True,
             "response": (
                 "I couldn't safely preserve the original "
-                "repair/service action while adding the appliance."
+                "maintenance action while adding the appliance."
             ),
         }
 
@@ -1600,10 +1761,182 @@ def clarification_node(
                     ]
                 )
 
-        # Run the existing date/time clarification only after the appliance
-        # prerequisite is satisfied.
+        # Normalize task scheduling only after any appliance prerequisite is
+        # satisfied. create_task remains strict ISO-only; this clarification
+        # layer converts relative user wording before authorization/execution.
         if clarification is None:
+            restored_missing_field = (
+                str(
+                    restored_context.get(
+                        "missing_field"
+                    )
+                    or ""
+                ).strip()
+                if isinstance(
+                    restored_context,
+                    dict,
+                )
+                else ""
+            )
+
+            # ----------------------------------------------------------
+            # Resumed date clarification
+            # ----------------------------------------------------------
             if (
+                resuming_same_tool
+                and restored_missing_field
+                == "due_date"
+            ):
+                date_reply = str(
+                    state.get("message")
+                    or ""
+                ).strip()
+
+                resolved_due_at = (
+                    resolve_relative_datetime(
+                        date_reply,
+                        state.get(
+                            "current_datetime"
+                        ),
+                    )
+                )
+
+                if resolved_due_at:
+                    args["due_at"] = (
+                        resolved_due_at
+                    )
+                    due_at = resolved_due_at
+
+                    updated_call = dict(
+                        call
+                    )
+                    updated_call[
+                        "args"
+                    ] = dict(args)
+                    call = updated_call
+                else:
+                    resolved_due_date = (
+                        resolve_relative_date(
+                            date_reply,
+                            state.get(
+                                "current_datetime"
+                            ),
+                        )
+                    )
+
+                    if resolved_due_date:
+                        # Persist the resolved date itself so the next
+                        # clarification can combine it with a time reply.
+                        args["due_at"] = (
+                            resolved_due_date
+                        )
+                        due_at = (
+                            resolved_due_date
+                        )
+
+                        updated_call = dict(
+                            call
+                        )
+                        updated_call[
+                            "args"
+                        ] = dict(args)
+                        call = updated_call
+
+                        missing_field = (
+                            "due_time"
+                        )
+                        clarification = (
+                            "What time should I schedule "
+                            f"'{args.get('title', 'that task')}' "
+                            "for on that day?"
+                        )
+                    else:
+                        missing_field = (
+                            "due_date"
+                        )
+                        clarification = (
+                            "I couldn't interpret that task date. "
+                            "Please provide a date such as today, "
+                            "tomorrow, next week, next Monday, "
+                            "or YYYY-MM-DD."
+                        )
+
+            # ----------------------------------------------------------
+            # Resumed time clarification
+            # ----------------------------------------------------------
+            elif (
+                resuming_same_tool
+                and restored_missing_field
+                == "due_time"
+            ):
+                preserved_date = due_at
+
+                if (
+                    not preserved_date
+                    or preserved_date == "None"
+                ):
+                    restored_args = (
+                        restored_context.get(
+                            "tool_args"
+                        )
+                        if isinstance(
+                            restored_context,
+                            dict,
+                        )
+                        else None
+                    )
+
+                    if isinstance(
+                        restored_args,
+                        dict,
+                    ):
+                        preserved_date = str(
+                            restored_args.get(
+                                "due_at"
+                            )
+                            or ""
+                        ).strip()
+
+                resolved_due_at = (
+                    resolve_relative_datetime(
+                        state.get("message"),
+                        state.get(
+                            "current_datetime"
+                        ),
+                        default_date=(
+                            preserved_date
+                            or None
+                        ),
+                    )
+                )
+
+                if resolved_due_at:
+                    args["due_at"] = (
+                        resolved_due_at
+                    )
+                    due_at = resolved_due_at
+
+                    updated_call = dict(
+                        call
+                    )
+                    updated_call[
+                        "args"
+                    ] = dict(args)
+                    call = updated_call
+                else:
+                    missing_field = (
+                        "due_time"
+                    )
+                    clarification = (
+                        "I couldn't interpret that task time. "
+                        "Please provide a time such as 6 PM, "
+                        "10:30 AM, noon, morning, or evening."
+                    )
+
+            # ----------------------------------------------------------
+            # Fresh task proposal
+            # ----------------------------------------------------------
+            elif (
                 not due_at
                 or due_at == "None"
             ):
@@ -1614,30 +1947,521 @@ def clarification_node(
                     f"'{args.get('title', 'that task')}' for?"
                 )
 
-            elif not (
-                _has_explicit_time(
-                    due_at
+            else:
+                resolved_due_at = (
+                    resolve_relative_datetime(
+                        due_at,
+                        state.get(
+                            "current_datetime"
+                        ),
+                    )
                 )
-                or _has_explicit_time(
-                    message
+
+                if resolved_due_at:
+                    args["due_at"] = (
+                        resolved_due_at
+                    )
+                    due_at = resolved_due_at
+
+                    updated_call = dict(
+                        call
+                    )
+                    updated_call[
+                        "args"
+                    ] = dict(args)
+                    call = updated_call
+                else:
+                    resolved_due_date = (
+                        resolve_relative_date(
+                            due_at,
+                            state.get(
+                                "current_datetime"
+                            ),
+                        )
+                    )
+
+                    if resolved_due_date:
+                        args["due_at"] = (
+                            resolved_due_date
+                        )
+                        due_at = (
+                            resolved_due_date
+                        )
+
+                        updated_call = dict(
+                            call
+                        )
+                        updated_call[
+                            "args"
+                        ] = dict(args)
+                        call = updated_call
+
+                        missing_field = (
+                            "due_time"
+                        )
+                        clarification = (
+                            "What time should I schedule "
+                            f"'{args.get('title', 'that task')}' "
+                            "for on that day?"
+                        )
+                    else:
+                        missing_field = (
+                            "due_date"
+                        )
+                        clarification = (
+                            "I couldn't interpret that task date. "
+                            "Please provide a date such as today, "
+                            "tomorrow, next week, next Monday, "
+                            "or YYYY-MM-DD."
+                        )
+
+    # --------------------------------------------------------------
+    # 3. Calendar
+    # --------------------------------------------------------------
+
+    elif tool_name == "create_calendar_event":
+        starts_at = str(
+            args.get("starts_at", "")
+        ).strip()
+
+        ends_at = str(
+            args.get("ends_at", "")
+        ).strip()
+
+        restored_missing_field = (
+            str(
+                restored_context.get(
+                    "missing_field"
                 )
+                or ""
+            ).strip()
+            if isinstance(
+                restored_context,
+                dict,
+            )
+            else ""
+        )
+
+        # ----------------------------------------------------------
+        # Start date / time
+        # ----------------------------------------------------------
+
+        if (
+            resuming_same_tool
+            and restored_missing_field
+            == "calendar_start_date"
+        ):
+            start_reply = str(
+                state.get("message")
+                or ""
+            ).strip()
+
+            resolved_start = (
+                resolve_relative_datetime(
+                    start_reply,
+                    state.get(
+                        "current_datetime"
+                    ),
+                )
+            )
+
+            if resolved_start:
+                args["starts_at"] = (
+                    resolved_start
+                )
+                starts_at = resolved_start
+
+                updated_call = dict(call)
+                updated_call["args"] = dict(
+                    args
+                )
+                call = updated_call
+            else:
+                resolved_start_date = (
+                    resolve_relative_date(
+                        start_reply,
+                        state.get(
+                            "current_datetime"
+                        ),
+                    )
+                )
+
+                if resolved_start_date:
+                    args["starts_at"] = (
+                        resolved_start_date
+                    )
+                    starts_at = (
+                        resolved_start_date
+                    )
+
+                    updated_call = dict(call)
+                    updated_call["args"] = dict(
+                        args
+                    )
+                    call = updated_call
+
+                    missing_field = (
+                        "calendar_start_time"
+                    )
+                    clarification = (
+                        "What time should the calendar event start "
+                        "on that day?"
+                    )
+                else:
+                    missing_field = (
+                        "calendar_start_date"
+                    )
+                    clarification = (
+                        "I couldn't interpret the event date. "
+                        "Please provide a date such as today, "
+                        "tomorrow, next week, next Monday, "
+                        "or YYYY-MM-DD."
+                    )
+
+        elif (
+            resuming_same_tool
+            and restored_missing_field
+            == "calendar_start_time"
+        ):
+            preserved_date = starts_at
+
+            if (
+                not preserved_date
+                or preserved_date == "None"
             ):
-                missing_field = "due_time"
-
-                clarification = (
-                    "What time should I schedule "
-                    f"'{args.get('title', 'that task')}' "
-                    "for on that day?"
+                restored_args = (
+                    restored_context.get(
+                        "tool_args"
+                    )
+                    if isinstance(
+                        restored_context,
+                        dict,
+                    )
+                    else None
                 )
 
+                if isinstance(
+                    restored_args,
+                    dict,
+                ):
+                    preserved_date = str(
+                        restored_args.get(
+                            "starts_at"
+                        )
+                        or ""
+                    ).strip()
+
+            resolved_start = (
+                resolve_relative_datetime(
+                    state.get("message"),
+                    state.get(
+                        "current_datetime"
+                    ),
+                    default_date=(
+                        preserved_date
+                        or None
+                    ),
+                )
+            )
+
+            if resolved_start:
+                args["starts_at"] = (
+                    resolved_start
+                )
+                starts_at = resolved_start
+
+                updated_call = dict(call)
+                updated_call["args"] = dict(
+                    args
+                )
+                call = updated_call
+            else:
+                missing_field = (
+                    "calendar_start_time"
+                )
+                clarification = (
+                    "I couldn't interpret the event start time. "
+                    "Please provide a time such as 10 AM, "
+                    "2:30 PM, noon, morning, or evening."
+                )
+
+        elif (
+            not starts_at
+            or starts_at == "None"
+        ):
+            missing_field = (
+                "calendar_start_date"
+            )
+            clarification = (
+                "What day or date should I schedule "
+                f"'{args.get('title', 'that event')}' for?"
+            )
+
+        else:
+            resolved_start = (
+                resolve_relative_datetime(
+                    starts_at,
+                    state.get(
+                        "current_datetime"
+                    ),
+                )
+            )
+
+            if resolved_start:
+                args["starts_at"] = (
+                    resolved_start
+                )
+                starts_at = resolved_start
+
+                updated_call = dict(call)
+                updated_call["args"] = dict(
+                    args
+                )
+                call = updated_call
+            else:
+                resolved_start_date = (
+                    resolve_relative_date(
+                        starts_at,
+                        state.get(
+                            "current_datetime"
+                        ),
+                    )
+                )
+
+                if resolved_start_date:
+                    args["starts_at"] = (
+                        resolved_start_date
+                    )
+                    starts_at = (
+                        resolved_start_date
+                    )
+
+                    updated_call = dict(call)
+                    updated_call["args"] = dict(
+                        args
+                    )
+                    call = updated_call
+
+                    missing_field = (
+                        "calendar_start_time"
+                    )
+                    clarification = (
+                        "What time should the calendar event start "
+                        "on that day?"
+                    )
+                else:
+                    missing_field = (
+                        "calendar_start_date"
+                    )
+                    clarification = (
+                        "I couldn't interpret the event start date. "
+                        "Please provide a date such as today, "
+                        "tomorrow, next week, next Monday, "
+                        "or YYYY-MM-DD."
+                    )
+
+        # ----------------------------------------------------------
+        # End time / duration — only after start is fully resolved.
+        # ----------------------------------------------------------
+
+        if clarification is None:
+            start_date = (
+                starts_at[:10]
+                if starts_at
+                else None
+            )
+
+            if (
+                resuming_same_tool
+                and restored_missing_field
+                == "calendar_end_time"
+            ):
+                resolved_end = (
+                    resolve_relative_datetime(
+                        state.get("message"),
+                        state.get(
+                            "current_datetime"
+                        ),
+                        default_date=start_date,
+                    )
+                )
+
+                if resolved_end:
+                    args["ends_at"] = (
+                        resolved_end
+                    )
+                    ends_at = resolved_end
+
+                    updated_call = dict(call)
+                    updated_call["args"] = dict(
+                        args
+                    )
+                    call = updated_call
+                else:
+                    missing_field = (
+                        "calendar_end_time"
+                    )
+                    clarification = (
+                        "I couldn't interpret the event end time. "
+                        "Please provide a time such as 11 AM, "
+                        "3:30 PM, noon, or evening."
+                    )
+
+            elif ends_at and ends_at != "None":
+                resolved_end = (
+                    resolve_relative_datetime(
+                        ends_at,
+                        state.get(
+                            "current_datetime"
+                        ),
+                        default_date=start_date,
+                    )
+                )
+
+                if resolved_end:
+                    args["ends_at"] = (
+                        resolved_end
+                    )
+                    ends_at = resolved_end
+
+                    updated_call = dict(call)
+                    updated_call["args"] = dict(
+                        args
+                    )
+                    call = updated_call
+                else:
+                    missing_field = (
+                        "calendar_end_time"
+                    )
+                    clarification = (
+                        "I couldn't interpret the event end time. "
+                        "Please provide a time such as 11 AM, "
+                        "3:30 PM, noon, or evening."
+                    )
+
+            else:
+                duration_context = " ".join(
+                    [
+                        str(
+                            state.get("message")
+                            or ""
+                        ),
+                        str(
+                            current_action.get(
+                                "description"
+                            )
+                            or ""
+                        ),
+                    ]
+                )
+
+                duration_minutes = (
+                    _calendar_duration_minutes(
+                        duration_context
+                    )
+                )
+
+                if duration_minutes:
+                    try:
+                        parsed_start = (
+                            datetime.fromisoformat(
+                                starts_at
+                            )
+                        )
+                    except ValueError:
+                        parsed_start = None
+
+                    if parsed_start is not None:
+                        resolved_end = (
+                            parsed_start
+                            + timedelta(
+                                minutes=(
+                                    duration_minutes
+                                )
+                            )
+                        ).isoformat()
+
+                        args["ends_at"] = (
+                            resolved_end
+                        )
+                        ends_at = resolved_end
+
+                        updated_call = dict(
+                            call
+                        )
+                        updated_call[
+                            "args"
+                        ] = dict(args)
+                        call = updated_call
+
+                if not ends_at:
+                    missing_field = (
+                        "calendar_end_time"
+                    )
+                    clarification = (
+                        "What time should the calendar event end, "
+                        "or how long should it last?"
+                    )
+
     # --------------------------------------------------------------
-    # 3. Maintenance
+    # 4. Maintenance
     # --------------------------------------------------------------
 
-    elif tool_name == "log_repair":
+    elif tool_name in {
+        "log_repair",
+        "report_issue",
+    }:
+        dependency_context = (
+            _dependency_appliance_context(
+                current_action
+            )
+        )
+
+        restored_appliance_context = (
+            isinstance(
+                restored_context,
+                dict,
+            )
+            and isinstance(
+                restored_context.get(
+                    "appliance_resolution"
+                ),
+                dict,
+            )
+        )
+
+        explicit_appliance_reference = (
+            _appliance_reference_for_call(
+                tool_name,
+                args,
+                current_action,
+                message,
+            )
+        )
+
+        # Repairs always require appliance resolution. Issues do so only when
+        # the request actually identifies an appliance or is resuming an
+        # already-started appliance prerequisite. Generic household issues
+        # remain valid with appliance_id=None.
+        should_resolve_appliance = (
+            tool_name == "log_repair"
+            or bool(
+                explicit_appliance_reference
+            )
+            or bool(
+                dependency_context
+            )
+            or bool(
+                restored_appliance_context
+            )
+        )
+
         # Suggestion-owned follow-ups already belong to a durable suggestion
-        # workflow.  Keep their existing ownership semantics unchanged.
-        if not suggestion_owned_followup:
+        # workflow. Keep their existing ownership semantics unchanged.
+        if (
+            not suggestion_owned_followup
+            and should_resolve_appliance
+        ):
             appliance_result = (
                 _resolve_appliance_clarification(
                     tool_name=tool_name,
@@ -1648,9 +2472,7 @@ def clarification_node(
                     message=message,
                     restored_context=(
                         restored_context
-                        or _dependency_appliance_context(
-                            current_action
-                        )
+                        or dependency_context
                     ),
                 )
             )
@@ -1688,9 +2510,8 @@ def clarification_node(
                     ]
                 )
 
-            # log_repair accepts appliance_id, so inject the id only after
-            # explicit confirmation/selection.  It never comes from fuzzy
-            # ranking alone.
+            # Both maintenance tools accept appliance_id. Inject the id only
+            # after explicit confirmation/selection; never from fuzzy ranking.
             if (
                 confirmed_appliance_id
                 and clarification is None
@@ -1707,22 +2528,256 @@ def clarification_node(
                 )
                 call = updated_call
 
-        serviced_at = str(
-            args.get("serviced_at", "")
-        ).strip()
+        if tool_name == "report_issue":
+            # report_issue has no additional required clarification once its
+            # optional appliance reference has been resolved.
+            pass
 
-        if (
-            clarification is None
-            and (
-                not serviced_at
-                or serviced_at == "None"
+        if tool_name == "log_repair":
+            # Normalize serviced_at only for repairs, using the shared
+            # deterministic date resolver. This covers both:
+            #   1. a resumed missing-date clarification, and
+            #   2. a specialist-proposed relative date such as "today".
+            restored_missing_field = (
+                str(
+                    restored_context.get("missing_field")
+                    or ""
+                ).strip()
+                if isinstance(restored_context, dict)
+                else ""
             )
-        ):
-            missing_field = "serviced_at"
 
-            clarification = (
-                "What date was the repair serviced on?"
+            serviced_at = str(
+                args.get("serviced_at", "")
+            ).strip()
+
+            # The durable clarification payload is trusted state. The specialist
+            # runs again on a short reply such as "yes", so unrelated tool fields
+            # must not be allowed to drift to that reply.
+            restored_tool_args = (
+                restored_context.get("tool_args")
+                if isinstance(
+                    restored_context,
+                    dict,
+                )
+                else None
             )
+
+            restored_serviced_at = ""
+
+            if isinstance(
+                restored_tool_args,
+                dict,
+            ):
+                restored_serviced_at = str(
+                    restored_tool_args.get(
+                        "serviced_at"
+                    )
+                    or ""
+                ).strip()
+
+            serviced_at_source = None
+
+            if (
+                resuming_same_tool
+                and restored_missing_field
+                == "serviced_at"
+            ):
+                # This turn is answering the date question. Always consume the
+                # current reply, even if a regenerated tool call contains a stale
+                # non-empty serviced_at value from an earlier turn.
+                serviced_at_source = (
+                    state.get("message")
+                )
+
+            elif (
+                resuming_same_tool
+                and restored_missing_field
+                in {
+                    "appliance_selection",
+                    "appliance_record_required",
+                    "appliance_record_name",
+                }
+            ):
+                # This turn is answering an appliance question, not a date
+                # question. Preserve the original date value that was stored
+                # before clarification instead of trusting a regenerated value
+                # such as "yes".
+                if (
+                    restored_serviced_at
+                    and restored_serviced_at
+                    != "None"
+                ):
+                    serviced_at_source = (
+                        restored_serviced_at
+                    )
+                else:
+                    # Some specialist calls omit serviced_at even when the
+                    # original user request contains a clear relative date such
+                    # as "today". The durable clarification context preserves the
+                    # original action description, so use that trusted text as a
+                    # deterministic fallback before asking the user again.
+                    restored_action = (
+                        restored_context.get("action")
+                        if isinstance(
+                            restored_context,
+                            dict,
+                        )
+                        else None
+                    )
+
+                    original_description = ""
+
+                    if isinstance(
+                        restored_action,
+                        dict,
+                    ):
+                        original_description = str(
+                            restored_action.get(
+                                "description"
+                            )
+                            or ""
+                        ).strip()
+
+                    if not original_description:
+                        original_description = str(
+                            current_action.get(
+                                "description"
+                            )
+                            or ""
+                        ).strip()
+
+                    if original_description:
+                        serviced_at_source = (
+                            original_description
+                        )
+                    else:
+                        serviced_at = ""
+                        args["serviced_at"] = ""
+
+                        updated_call = dict(call)
+                        updated_call["args"] = dict(
+                            args
+                        )
+                        call = updated_call
+
+            elif (
+                serviced_at
+                and serviced_at != "None"
+            ):
+                serviced_at_source = (
+                    serviced_at
+                )
+
+            if (
+                clarification is None
+                and serviced_at_source is not None
+            ):
+                resolved_serviced_at = (
+                    resolve_relative_date(
+                        serviced_at_source,
+                        state.get(
+                            "current_datetime"
+                        ),
+                    )
+                )
+
+                # Appliance confirmation may restore a non-empty but unusable
+                # specialist value such as "completed". If that persisted value
+                # is not a date, fall back to the durable original action
+                # description before asking the user for the date again.
+                if (
+                    not resolved_serviced_at
+                    and resuming_same_tool
+                    and restored_missing_field
+                    in {
+                        "appliance_selection",
+                        "appliance_record_required",
+                        "appliance_record_name",
+                    }
+                ):
+                    restored_action = (
+                        restored_context.get("action")
+                        if isinstance(
+                            restored_context,
+                            dict,
+                        )
+                        else None
+                    )
+
+                    fallback_description = ""
+
+                    if isinstance(
+                        restored_action,
+                        dict,
+                    ):
+                        fallback_description = str(
+                            restored_action.get(
+                                "description"
+                            )
+                            or ""
+                        ).strip()
+
+                    if not fallback_description:
+                        fallback_description = str(
+                            current_action.get(
+                                "description"
+                            )
+                            or ""
+                        ).strip()
+
+                    if (
+                        fallback_description
+                        and fallback_description
+                        != str(
+                            serviced_at_source
+                            or ""
+                        ).strip()
+                    ):
+                        resolved_serviced_at = (
+                            resolve_relative_date(
+                                fallback_description,
+                                state.get(
+                                    "current_datetime"
+                                ),
+                            )
+                        )
+
+                if resolved_serviced_at:
+                    args["serviced_at"] = (
+                        resolved_serviced_at
+                    )
+                    serviced_at = (
+                        resolved_serviced_at
+                    )
+
+                    updated_call = dict(call)
+                    updated_call["args"] = dict(
+                        args
+                    )
+                    call = updated_call
+                else:
+                    missing_field = "serviced_at"
+                    clarification = (
+                        "I couldn't interpret that repair date. "
+                        "Please provide a date such as today, "
+                        "yesterday, next week, next month, "
+                        "next Monday, or YYYY-MM-DD."
+                    )
+
+            if (
+                clarification is None
+                and (
+                    not serviced_at
+                    or serviced_at == "None"
+                )
+            ):
+                missing_field = "serviced_at"
+
+                clarification = (
+                    "What date was the repair serviced on?"
+                )
+
 
     # --------------------------------------------------------------
     # Appliance record prerequisite
@@ -1765,7 +2820,7 @@ def clarification_node(
         )
         clarification = (
             "What appliance should I add before "
-            "continuing this repair/service request?"
+            "continuing this maintenance request?"
         )
         appliance_resolution_context = {
             "status": "ADD_NEW_REQUIRED",
@@ -1852,7 +2907,10 @@ def clarification_node(
 
     if is_resumed_clarification:
         if (
-            tool_name == "log_repair"
+            tool_name in {
+                "log_repair",
+                "report_issue",
+            }
             and confirmed_appliance_id
         ):
             updated_call = dict(

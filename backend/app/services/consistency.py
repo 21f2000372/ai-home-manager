@@ -8,7 +8,8 @@ from app.db.base import SessionLocal
 from app.models.inventory import GroceryItem, InventoryItem
 from app.models.finance import Expense
 from app.models.tasks import CalendarEvent, Task
-from app.models.enums import TaskStatus
+from app.models.people import Membership, User
+from app.models.enums import MembershipStatus, TaskStatus
 from datetime import datetime, timedelta, timezone
 # ============================================================
 # CANONICAL CONSISTENCY STATUSES
@@ -449,11 +450,7 @@ def _timestamp_key(
             return raw
 
     if parsed.tzinfo is not None:
-        parsed = (
-            parsed
-            .astimezone(timezone.utc)
-            .replace(tzinfo=None)
-        )
+        parsed = parsed.replace(tzinfo=None)
 
     return (
         parsed
@@ -487,12 +484,7 @@ def _datetime_value(
             return None
 
     if parsed.tzinfo is not None:
-        parsed = (
-            parsed
-            .astimezone(timezone.utc)
-            .replace(tzinfo=None)
-        )
-
+        parsed = parsed.replace(tzinfo=None)
     return parsed.replace(microsecond=0)
 
 
@@ -520,6 +512,75 @@ def _event_involves_user(
             or ""
         ).strip() == user_id
         for attendee in attendees
+    )
+
+
+def _resolve_task_assignee_id(
+    session,
+    value: Any,
+) -> str:
+    """Resolve a task assignee name/user id for consistency checks."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    exact = (
+        session.query(User)
+        .join(
+            Membership,
+            Membership.user_id == User.user_id,
+        )
+        .filter(
+            User.user_id == raw,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+        .first()
+    )
+    if exact is not None:
+        return str(exact.user_id)
+
+    needle = raw.casefold()
+    active_members = (
+        session.query(User)
+        .join(
+            Membership,
+            Membership.user_id == User.user_id,
+        )
+        .filter(
+            Membership.status == MembershipStatus.ACTIVE
+        )
+        .all()
+    )
+    matches = [
+        user
+        for user in active_members
+        if getattr(user, "display_name", None)
+        and needle in str(user.display_name).casefold()
+    ]
+    if len(matches) == 1:
+        return str(matches[0].user_id)
+    return ""
+
+
+def _task_windows_overlap(
+    requested_due: Optional[datetime],
+    existing_due: Optional[datetime],
+    duration_minutes: int = 60,
+) -> bool:
+    """Return strict overlap for task windows ending at their due times."""
+    if requested_due is None or existing_due is None:
+        return False
+
+    requested_start = requested_due - timedelta(
+        minutes=duration_minutes
+    )
+    existing_start = existing_due - timedelta(
+        minutes=duration_minutes
+    )
+
+    return (
+        existing_start < requested_due
+        and existing_due > requested_start
     )
 
 
@@ -1021,213 +1082,100 @@ def _check_expense(
         operation,
     )
 
-    try:
-        amount = int(
-            arguments.get("amount_minor")
-        )
-    except (TypeError, ValueError):
-        return result
+    requested_description = _normalize_text(
+        arguments.get("description")
+    )
 
-    currency = str(
-        arguments.get("currency")
-        or ""
-    ).upper().strip()
+    # Finance duplicate identity is intentionally based on description + time.
+    # Amount, currency and category may differ and are not used to decide
+    # whether two expense entries represent the same user action.
+    if not requested_description:
+        return result
 
     occurred_at = arguments.get(
         "occurred_at"
     )
 
+    # Mirror log_expense execution semantics: a blank occurred_at is stored as
+    # the current local time. Duplicate preflight must evaluate the same
+    # effective timestamp rather than treating the request as date-less.
+    if not str(
+        occurred_at or ""
+    ).strip():
+        occurred_at = datetime.now().astimezone()
+
+    requested_dt = _datetime_value(
+        occurred_at
+    )
     requested_date = _date_key(
         occurred_at
     )
 
     if (
-        amount <= 0
-        or not currency
+        requested_dt is None
         or not requested_date
     ):
         return result
 
-    requested_description = (
-        _normalize_text(
-            arguments.get("description")
-        )
+    # Ten minutes is deliberately narrow: repeated submissions/retries are
+    # treated as the same expense action, while later same-day expenses with
+    # the same description still receive a softer possible-duplicate review.
+    exact_window = timedelta(
+        minutes=10
     )
-
-    requested_category = (
-        _normalize_category(
-            arguments.get("category")
-        )
-    )
-
-    requested_timestamp = (
-        _timestamp_key(occurred_at)
-    )
-
-    requested_document_id = str(
-        arguments.get("document_id")
-        or ""
-    ).strip()
 
     session = SessionLocal()
 
     try:
-        # Household-wide by design.
-        #
-        # recorded_by is provenance only. It must NOT be used
-        # to hide another household member's matching expense.
+        # Household-wide by design. Do not pre-filter by amount/currency:
+        # those fields are not Finance duplicate-identity signals.
         rows = (
             session.query(Expense)
-            .filter(
-                Expense.amount_minor
-                == amount
-            )
             .all()
         )
 
         for existing in rows:
-            existing_currency = str(
-                existing.currency
-                or ""
-            ).upper().strip()
+            existing_description = _normalize_text(
+                existing.description
+                or existing.category
+            )
 
             if (
-                existing_currency
-                != currency
+                not existing_description
+                or existing_description
+                != requested_description
             ):
                 continue
 
+            existing_dt = _datetime_value(
+                existing.occurred_at
+            )
             existing_date = _date_key(
                 existing.occurred_at
             )
 
-            if existing_date != requested_date:
+            if (
+                existing_dt is None
+                or existing_date
+                != requested_date
+            ):
                 continue
 
-            existing_description = (
-                _normalize_text(
-                    existing.description
-                )
+            time_delta = abs(
+                requested_dt - existing_dt
+            )
+            within_exact_window = (
+                time_delta <= exact_window
             )
 
-            existing_category = (
-                _normalize_category(
-                    existing.category
-                )
-            )
-
-            description_similarity = (
-                _text_similarity(
-                    requested_description,
-                    existing_description,
-                )
-            )
-
-            same_description = bool(
-                requested_description
-                and existing_description
-                and requested_description
-                == existing_description
-            )
-
-            same_category = bool(
-                requested_category
-                and existing_category
-                and requested_category
-                == existing_category
-            )
-
-            same_timestamp = bool(
-                requested_timestamp
-                and requested_timestamp
-                == _timestamp_key(
-                    existing.occurred_at
-                )
-            )
-
-            existing_document_id = str(
-                getattr(
-                    existing,
-                    "document_id",
-                    None,
-                )
-                or ""
-            ).strip()
-
-            same_document = bool(
-                requested_document_id
-                and existing_document_id
-                and requested_document_id
-                == existing_document_id
-            )
-
-            # ------------------------------------------------
-            # Confidence score
-            #
-            # Same amount + currency + local date forms the
-            # candidate window.
-            # ------------------------------------------------
-
-            confidence = 0.55
-
-            if same_category:
-                confidence += 0.10
-
-            if description_similarity >= 0.90:
-                confidence += 0.25
-            elif description_similarity >= 0.70:
-                confidence += 0.18
-            elif description_similarity >= 0.50:
-                confidence += 0.10
-
-            if same_timestamp:
-                confidence += 0.10
-
-            if same_document:
-                confidence += 0.35
-
-            confidence = min(
-                1.0,
-                confidence,
-            )
-
-            # ------------------------------------------------
-            # Exact identity requires stronger evidence than
-            # merely same amount/date.
-            # ------------------------------------------------
-
-            exact_duplicate = (
-                same_document
-                or (
-                    same_timestamp
-                    and (
-                        same_description
-                        or same_category
-                    )
-                )
-            )
-
-            if exact_duplicate:
+            if within_exact_window:
                 status = EXACT_DUPLICATE
-                code = (
-                    "expense_exact_duplicate"
-                )
-
-            elif confidence >= 0.65:
-                status = POSSIBLE_DUPLICATE
-                code = (
-                    "expense_possible_duplicate"
-                )
-
+                code = "expense_exact_duplicate"
+                confidence = 1.0
             else:
-                # Example:
-                #
-                # Rs 200 petrol
-                # Rs 200 movie
-                #
-                # on the same day should not trigger merely
-                # because amount/date happen to match.
-                continue
+                status = POSSIBLE_DUPLICATE
+                code = "expense_possible_duplicate"
+                confidence = 0.8
 
             description_label = (
                 existing.description
@@ -1236,15 +1184,12 @@ def _check_expense(
             )
 
             details = (
-                "A {0} expense for '{1}' is already "
-                "logged on {2}."
+                "An expense for '{0}' is already logged "
+                "on {1} at {2}."
             ).format(
-                _money_text(
-                    amount,
-                    currency,
-                ),
                 description_label,
                 existing_date,
+                existing_dt.time().isoformat(),
             )
 
             match = {
@@ -1285,48 +1230,13 @@ def _check_expense(
                     ),
                     confidence=confidence,
                     signals={
-                        "same_amount": True,
-                        "same_currency": True,
+                        "same_description": True,
                         "same_local_date": True,
-                        "same_category": (
-                            same_category
+                        "within_10_minutes": (
+                            within_exact_window
                         ),
-                        "same_description": (
-                            same_description
-                        ),
-                        "description_similarity": (
-                            round(
-                                description_similarity,
-                                4,
-                            )
-                        ),
-                        "same_timestamp": (
-                            same_timestamp
-                        ),
-                        "same_document": (
-                            same_document
-                        ),
-                        "different_recorder": (
-                            bool(
-                                getattr(
-                                    existing,
-                                    "recorded_by",
-                                    None,
-                                )
-                                and str(
-                                    getattr(
-                                        existing,
-                                        "recorded_by",
-                                        "",
-                                    )
-                                )
-                                != str(
-                                    arguments.get(
-                                        "recorded_by"
-                                    )
-                                    or ""
-                                )
-                            )
+                        "time_delta_seconds": int(
+                            time_delta.total_seconds()
                         ),
                     },
                     resolution_type=(
@@ -1390,6 +1300,13 @@ def _check_task(
     session = SessionLocal()
 
     try:
+        requested_assignee_id = (
+            _resolve_task_assignee_id(
+                session,
+                requested_assignee,
+            )
+        )
+
         # Household-wide by design. Only active tasks participate in
         # duplicate/conflict detection; completed/cancelled work is history.
         rows = (
@@ -1425,10 +1342,11 @@ def _check_task(
                 and title_similarity >= 0.82
             )
 
-            if not exact_title and not similar_title:
-                continue
-
             existing_due = _timestamp_key(
+                existing.due_at
+            )
+
+            existing_due_dt = _datetime_value(
                 existing.due_at
             )
 
@@ -1455,28 +1373,23 @@ def _check_task(
                 or ""
             ).strip()
 
-            # The planner may supply a display name while the stored task
-            # contains a user id. Only compare ownership when both values are
-            # already the same stored id shape or when they are exactly equal.
-            # Name -> id resolution remains the task tool's responsibility.
             same_assignee = (
                 (
                     not requested_assignee
                     and not existing_assignee
                 )
                 or (
-                    requested_assignee
-                    and requested_assignee
+                    bool(requested_assignee_id)
+                    and requested_assignee_id
                     == existing_assignee
                 )
             )
 
             different_known_assignee = (
-                bool(requested_assignee)
+                bool(requested_assignee_id)
                 and bool(existing_assignee)
-                and len(requested_assignee) == 36
-                and len(existing_assignee) == 36
-                and requested_assignee != existing_assignee
+                and requested_assignee_id
+                != existing_assignee
             )
 
             match = {
@@ -1509,6 +1422,65 @@ def _check_task(
                     else str(existing.status)
                 ),
             }
+
+            # ------------------------------------------------
+            # Same assignee + overlapping task windows.
+            # Scheduling conflict is independent of task identity.
+            # ------------------------------------------------
+            if (
+                requested_assignee_id
+                and existing_assignee
+                and requested_assignee_id
+                == existing_assignee
+                and _task_windows_overlap(
+                    requested_due_dt,
+                    existing_due_dt,
+                )
+                and not exact_title
+                and not similar_title
+            ):
+                result.add(
+                    ConsistencyFinding(
+                        code="task_assignee_time_conflict",
+                        status=TIME_CONFLICT,
+                        domain="tasks",
+                        operation=operation,
+                        details=(
+                            "The assigned household member "
+                            "already has the active task "
+                            "'{0}' in an overlapping time "
+                            "window."
+                        ).format(existing.title),
+                        candidate_type="task",
+                        candidate_id=str(existing.task_id),
+                        confidence=1.0,
+                        signals={
+                            "same_assignee": True,
+                            "strict_time_overlap": True,
+                            "task_window_minutes": 60,
+                            "same_normalized_title": False,
+                            "title_similarity": round(
+                                title_similarity,
+                                4,
+                            ),
+                            "existing_due_at": existing_due,
+                            "requested_due_at": requested_due,
+                            "active_task": True,
+                        },
+                        resolution_type=TIME_RESOLUTION,
+                        allowed_resolutions=[
+                            CHOOSE_NEW_TIME,
+                            KEEP_PROPOSED_TIME,
+                            REVISE_PROPOSED,
+                            CANCEL_PROPOSED,
+                        ],
+                        match=match,
+                    )
+                )
+                continue
+
+            if not exact_title and not similar_title:
+                continue
 
             # ------------------------------------------------
             # Ownership conflict
@@ -1786,11 +1758,15 @@ def _check_task(
             ).all()
 
             for existing_event in events:
-                if not _event_involves_user(
-                    existing_event,
-                    requested_assignee,
-                ):
-                    continue
+                if requested_assignee:
+                    if not requested_assignee_id:
+                        continue
+
+                    if not _event_involves_user(
+                        existing_event,
+                        requested_assignee_id,
+                    ):
+                        continue
 
                 event_start = _datetime_value(
                     existing_event.starts_at
